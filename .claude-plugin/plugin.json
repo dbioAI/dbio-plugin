@@ -1,0 +1,6 @@
+{
+  "name": "dbio-plugin",
+  "version": "0.1.0",
+  "description": "Bộ nhẹ để nhân viên AI / phòng ban làm việc với dbio qua MCP: lệnh dbio-staff (thẻ, hộp thư, canh tin) và đọc AI Playbook của vai.",
+  "author": { "name": "dbio" }
+}
