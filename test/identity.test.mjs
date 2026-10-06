@@ -56,7 +56,7 @@ test('buildIdentity: máy chủ lỗi ⇒ dùng bản nhớ cũ + đánh dấu c
   const { readCache, writeCache } = mem(); const bad = async () => { throw new Error('mạng'); };
   const base = { cliId: 'c', resolve: () => ({ who: 'A', title: 'A', source: 'title' }), readCache, writeCache };
   const first = await buildIdentity({ ...base, fetchStatus: bad, fetchPlaybooks: bad, now: NOW });
-  assert.match(first.line, /Bạn là "A"/); assert.match(first.line, /chưa gắn/);
+  assert.match(first.line, /CHƯA xác nhận/); assert.ok(!/không hỏi lại|GHI ĐÈ/.test(first.line)); assert.match(first.line, /"A"/);
   await buildIdentity({ ...base, fetchStatus: async () => ({ state: 'idle', task: '9#9' }), fetchPlaybooks: async () => ['p'], now: NOW + 1 });
   const stale = await buildIdentity({ ...base, fetchStatus: bad, fetchPlaybooks: bad, now: NOW + STATUS_TTL_MS * 2 });
   assert.match(stale.line, /9#9/); assert.match(stale.line, /có thể cũ/);
@@ -119,4 +119,38 @@ test('HOOK: chưa nhận diện được vai ⇒ UserPromptSubmit im lặng; Ses
     assert.deepEqual(await run('UserPromptSubmit'), { code: 0, out: '' });
     const s = await run('SessionStart'); assert.match(JSON.parse(s.out).hookSpecificOutput.additionalContext, /bootstrap/);
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('buildIdentity: máy chủ gọi người này bằng TÊN KHÁC ⇒ theo máy chủ, nêu lệch', async () => {
+  const { readCache, writeCache } = mem();
+  const r = await buildIdentity({ cliId: 'c', resolve: () => ({ who: 'TỐI ƯU PAGE WEB', title: 'TỐI ƯU PAGE WEB', source: 'title' }), fetchStatus: async () => ({ state: 'working', task: '1#2', name: 'DEV WEB' }), fetchPlaybooks: async () => ['playbook-x'], readCache, writeCache, now: NOW });
+  assert.match(r.line, /Bạn là "DEV WEB"/); assert.match(r.line, /tên phiên "TỐI ƯU PAGE WEB" lệch/); assert.match(r.line, /GHI ĐÈ/);
+  const same = await buildIdentity({ cliId: 'd', resolve: () => ({ who: 'dev  web', title: null, source: 'env' }), fetchStatus: async () => ({ state: 'idle', task: null, name: 'DEV WEB' }), fetchPlaybooks: async () => [], readCache, writeCache, now: NOW });
+  assert.ok(!/lệch/.test(same.line)); // chỉ khác hoa/thường/khoảng trắng ⇒ không phải lệch
+});
+
+test('identityLine: unconfirmed ⇒ không khẳng định, không câu "không hỏi lại"', () => {
+  const l = identityLine({ who: 'A', unconfirmed: true, playbooks: ['p'], task: null });
+  assert.match(l, /CHƯA xác nhận/); assert.ok(!/GHI ĐÈ|không hỏi lại/.test(l));
+});
+
+test('HOOK chạy ĐÔI (cài cả plugin lẫn dbio-internal) ⇒ chỉ MỘT bản in', async () => {
+  const srv = createServer((req, res) => {
+    let b = ''; req.on('data', (d) => { b += d; });
+    req.on('end', () => {
+      const a = JSON.parse(b).params.arguments; const out = a.action === 'staff_status' ? { staff: { name: a.who, state: 'idle', task: null } } : { playbooks: [] };
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify({ success: true, ...out }) }] } }));
+    });
+  });
+  await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+  const home = mkdtempSync(join(tmpdir(), 'idh-'));
+  try {
+    mkdirSync(join(home, '.dbio', 'staff-keys'), { recursive: true });
+    writeFileSync(join(home, '.dbio', 'staff-keys', 'DEV_A.json'), JSON.stringify({ key: 'sk_FAKEKEYVALUE0123456789', mcp_url: `http://127.0.0.1:${srv.address().port}/mcp`, store_id: 1 }));
+    const HOOK = fileURLToPath(new URL('../hooks/identity.mjs', import.meta.url));
+    const one = () => new Promise((ok) => { const c = spawn(process.execPath, [HOOK], { env: { ...process.env, USERPROFILE: home, HOME: home, DBIO_STAFF: 'DEV A' } }); let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('close', () => ok(o)); c.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'dup-1' })); });
+    const outs = await Promise.all([one(), one()]);
+    assert.equal(outs.filter((o) => o.includes('Bạn là')).length, 1, JSON.stringify(outs));
+  } finally { srv.close(); rmSync(home, { recursive: true, force: true }); }
 });
