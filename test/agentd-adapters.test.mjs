@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { adapterNames, getAdapter, loadAdapterModules, registerAdapter } from '../lib/agentd/adapters/index.mjs';
 import { resolveDesktopSession } from '../lib/agentd/adapters/claude-desktop.mjs';
 import { urlAllowed } from '../lib/agentd/adapters/hermes.mjs';
-import { SAFE_ARG, assertSafeArgs, runChild } from '../lib/agentd/adapters/util.mjs';
+import { SAFE_ARG, assertSafeArgs, resolveBin, runChild } from '../lib/agentd/adapters/util.mjs';
 
 process.env.DBIO_AGENTD_LOG_DIR = mkdtempSync(join(tmpdir(), 'agentd-log-'));
 
@@ -139,4 +139,14 @@ test('runChild: quá hạn ⇒ bị kill (không treo daemon)', async () => {
   assert.ok(r.ok);
   const t0 = Date.now(); const x = await r.running;
   assert.ok(Date.now() - t0 < 5000); assert.notEqual(x.code, 0);
+});
+
+test('resolveBin: tên trần ⇒ đường dẫn tuyệt đối trong PATH, KHÔNG dò thư mục hiện hành; có dấu phân cách giữ nguyên', () => {
+  const d = mkdtempSync(join(tmpdir(), 'bin-')); const evil = mkdtempSync(join(tmpdir(), 'evil-'));
+  const ext = process.platform === 'win32' ? '.cmd' : ''; const same = (a, b) => assert.equal(a.toLowerCase(), b.toLowerCase()); writeFileSync(join(d, 'tool861' + ext), ''); writeFileSync(join(evil, 'tool861' + ext), '');
+  const env = { PATH: d, PATHEXT: ext.toUpperCase() };
+  same(resolveBin('tool861', env), join(d, 'tool861' + ext));
+  const old = process.cwd(); process.chdir(evil);
+  try { same(resolveBin('tool861', env), join(d, 'tool861' + ext)); assert.equal(resolveBin('tool861', { PATH: '.' }), 'tool861'); } finally { process.chdir(old); }
+  assert.equal(resolveBin('./x', env), './x'); assert.equal(resolveBin('khong-co-861', env), 'khong-co-861');
 });
