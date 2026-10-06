@@ -7,20 +7,21 @@ Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **db
 ## Cài (3 bước)
 
 1. **Lấy bộ này** — `git clone git@github.com:dbioAI/dbio-plugin.git` (cần Node ≥ 20; không cần npm install).
-2. **Dán khoá nhân viên** — quản trị workspace cấp một khoá cho bạn; lưu thành `~/.dbio/staff-keys/<tên nhân viên>.json`:
-   `{ "key": "sk_…", "mcp_url": "https://…/mcp", "store_id": 0, "board": 0 }` (`board` = sổ cái nhóm bạn; bỏ trống thì dùng `--board`, biến `DBIO_BOARD`, hoặc máy chủ tự gắn khi bạn nhận một thẻ). **Không bao giờ đưa khoá vào chat/commit.**
+2. **Lấy khoá — agent tự làm, bạn không cần dán gì**: chạy `node bin/dbio-staff.mjs login --as "<tên nhân viên>"` ⇒ in một MÃ THIẾT BỊ ngắn; agent gọi MCP `ai_character staff_key_approve {code, who}` bằng connector dbio (đã đăng nhập chủ) ⇒ khoá được ghi thẳng vào `~/.dbio/staff-keys/<tên>.json` (không đi qua chat/ngữ cảnh model; chỉ in 4 ký tự cuối). Dự phòng: chủ lấy khoá ở dash › Nhân viên AI › Khoá MCP (tải tệp json) rồi đặt vào đúng đường dẫn đó. **Không bao giờ đưa khoá vào chat/commit.**
+   Tuỳ chọn trong tệp khoá: `"board": <id sổ cái>` (hoặc `--board`, biến `DBIO_BOARD`, hoặc máy chủ tự cho biết qua nhóm của bạn (team_list)).
 3. **Kiểm** — `node bin/dbio-staff.mjs staff whoami --as "<tên nhân viên>"` ⇒ `ok <tên> · máy … · chưa đọc N`.
 
 Đặt `DBIO_STAFF="<tên nhân viên>"` một lần để khỏi gõ `--as`.
 
 ## Lệnh
 
-`node bin/dbio-staff.mjs <nhóm> <lệnh>` — `staff` (whoami · card · checkpoint · say · move · new · inbox · ack · reply · status · stuck · assign · done · watch · next · sweep · call) và `playbook` (get · log · propose). `--help` ở từng nhóm.
+`node bin/dbio-staff.mjs <nhóm> <lệnh>` — `staff` (login · install-skills · bootstrap · whoami · card · checkpoint · say · move · new · inbox · ack · reply · status · stuck · assign · done · watch · next · sweep · call) và `playbook` (get · log · propose). `--help` ở từng nhóm.
 
 ## Biến môi trường
 
 | Biến | Ý nghĩa |
 |---|---|
+| `DBIO_MCP_URL` | địa chỉ MCP khi `login` (mặc định MCP của dbio) |
 | `DBIO_STAFF` | tên nhân viên (thay `--as`) |
 | `DBIO_BOARD` | sổ cái mặc định |
 | `DBIO_PM_NAME` | tên trưởng nhóm để @nhắc (mặc định "PM") |

@@ -90,3 +90,15 @@ test('buildReason mang deliverables (không rỗng); outLine; mediaUrlOf; isHttp
   assert.equal(mediaUrlOf({ error: 'TICKET_USED' }), null);
   assert.ok(isHttps('https://a.b/c')); assert.ok(!isHttps('http://a.b')); assert.ok(!isHttps('C:\a.png'));
 });
+
+import { boardFromTeams } from '../lib/common.mjs';
+test('boardFromTeams: sổ cái theo nhóm có tên mình; nhiều nhóm ⇒ thẻ đang cầm › nhóm chính › đầu tiên; không thuộc nhóm ⇒ null', () => {
+  const m = (name, o = {}) => ({ name, teams: [], task: null, ...o });
+  const T = (id, board, members) => ({ id, ledger_board_id: board, members });
+  assert.equal(boardFromTeams([T(1, 100, [m('A')])], ' a '), 100);
+  assert.equal(boardFromTeams([T(1, 100, [m('B')])], 'A'), null);
+  assert.equal(boardFromTeams([T(1, 100, [m('A')]), T(2, 200, [m('A', { teams: [{ id: 2, primary: true }] })])], 'A'), 200);
+  assert.equal(boardFromTeams([T(1, 100, [m('A', { task: { board_id: 100 } })]), T(2, 200, [m('A', { teams: [{ id: 2, primary: true }] })])], 'A'), 100);
+  assert.equal(boardFromTeams([T(1, 0, [m('A')])], 'A'), null);
+  assert.equal(boardFromTeams(undefined, 'A'), null);
+});
