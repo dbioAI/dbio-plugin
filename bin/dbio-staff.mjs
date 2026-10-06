@@ -4,6 +4,7 @@
  *
  *   staff     làm việc với sổ cái: whoami · card · checkpoint · say · move · new · inbox · ack · reply · status · stuck · assign · done · watch · next · sweep · call …
  *   login · install-skills · bootstrap   dựng máy mới chỉ từ connector dbio MCP (mã thiết bị, tự ghi skill, checkin) — xem `dbio-staff login --help`
+ *   listen    nghe kênh đẩy sự kiện (WebSocket): có việc ⇒ in + thoát 0 (thay vòng hỏi của watch) — xem `dbio-staff listen --help`
  *   playbook  get · log · propose — đọc / góp ý AI Playbook ONLINE của vai (qua MCP, bằng khoá nhân viên)
  *
  * Khoá: ~/.dbio/staff-keys/<tên>.json (do quản trị workspace cấp). Tên: --as "<tên>" hoặc biến DBIO_STAFF.
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { die, helpOf } from '../lib/common.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const GROUPS = ['staff', 'playbook'];
+const GROUPS = ['staff', 'playbook', 'listen'];
 const SETUP = ['login', 'install-skills', 'bootstrap']; // dựng máy mới: chạy bin/cmd/setup.mjs với tên lệnh
 const [group, ...rest] = process.argv.slice(2);
 if (!group || ['--help', '-h', 'help'].includes(group)) die(helpOf(import.meta.url), 0);

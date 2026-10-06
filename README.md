@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.1.0 (P1)** — lệnh `dbio-staff` + lõi dùng chung. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.2.0** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -15,7 +15,67 @@ Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **db
 
 ## Lệnh
 
-`node bin/dbio-staff.mjs <nhóm> <lệnh>` — `staff` (login · install-skills · bootstrap · whoami · card · checkpoint · say · move · new · inbox · ack · reply · status · stuck · assign · done · watch · next · sweep · call) và `playbook` (get · log · propose). `--help` ở từng nhóm.
+`node bin/dbio-staff.mjs <nhóm> <lệnh>` — `listen` (nghe kênh đẩy) · `staff` (login · install-skills · bootstrap · whoami · card · checkpoint · say · move · new · inbox · ack · reply · status · stuck · assign · done · watch · next · sweep · call) và `playbook` (get · log · propose). `--help` ở từng nhóm.
+
+## Nhận việc kiểu ĐẨY: `dbio-staff listen` + daemon `dbio-agentd`
+
+Máy chủ có kênh sự kiện `staff:` (WebSocket, SSE dự phòng): giao thẻ / @nhắc / chủ quyết / trả lời / khẩn được **đẩy** tới agent trong ≤ ~2 giây, không cần hỏi vòng. Hợp đồng sự kiện v1 nằm ở tài liệu của máy chủ (`docs/staff-stream.md`). Client ở đây: Node thuần, không phụ thuộc gói ngoài; WebSocket cần Node ≥ 22, Node 20 tự rơi về SSE.
+
+### Cài một lệnh
+
+```
+npm i -g github:dbioAI/dbio-plugin      # sau này: npm i -g dbio-plugin
+```
+⇒ có `dbio-staff` và `dbio-agentd` (cần khoá nhân viên: `dbio-staff login --as "<tên>"`).
+
+### 1. Phiên đang làm việc: `dbio-staff listen --as "<tên>"`
+
+Chạy NỀN trong phiên (`run_in_background`): có tin cần làm ⇒ in (≤ 2 dòng/tin) rồi **thoát 0** ⇒ phiên thức; xử lý xong chạy lại. Hết giờ (`--max-min`, mặc định 115) ⇒ 1 dòng, thoát 3. Con trỏ lưu ở `~/.dbio/stream/<tên>.listen.cursor.json` nên chạy lại không sót, không lặp. Lọc giống `watch` (tin tự mình gửi, bản sao, trùng, góp ý… bỏ + tự ack, 0 token). Cờ: `--fresh` (bỏ tin cũ) · `--sse` · `--coalesce <ms>` · `--secretary`.
+
+### 2. Phiên đã nghỉ: daemon `dbio-agentd`
+
+```
+dbio-agentd init              # ghi ~/.dbio/agentd.json mẫu, điền nhân viên + adapter + phiên
+dbio-agentd wake "<tên>"      # thử đánh thức qua adapter (không chờ việc thật)
+dbio-agentd install           # dịch vụ người dùng: launchd · Task Scheduler · systemd --user (tự chạy lại)
+dbio-agentd status            # dịch vụ + từng nhân viên: nối WS/SSE, số lần thức, lỗi cuối
+dbio-agentd uninstall
+```
+
+Mỗi nhân viên trên máy = MỘT kết nối bằng khoá riêng của nó. Tin tới ⇒ lọc ⇒ luật ⇒ **adapter** đánh thức phiên:
+
+| Việc | Luật (mã, 0 token) |
+|---|---|
+| Phiên đang `listen` | daemon nhường (`listen` thức < 5s); sau `listener_confirm_s` (60s) mà máy chủ vẫn báo tin chưa đọc ⇒ daemon thức |
+| Phiên nghỉ | gọi adapter ngay (thường < 5s sau khi đẩy) |
+| Lượt trước còn chạy | không chồng; adapter lỗi ⇒ không ack, thử lại sau `retry_s` |
+| Quét sổ cái (`rules.sweep`, bật trên MỘT máy) | thẻ im > 1h ⇒ hỏi; > 2h / mất nhịp / 2 thẻ ⇒ ghi chú kèm `@<trưởng nhóm>` (đặt `DBIO_PM_NAME`); chờ chủ không tính là im |
+
+Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi chỗ; daemon tự nạp lại khi tệp đổi):
+
+```json
+{ "staff": { "<tên>": { "adapter": "claude-cli", "session": "<id phiên>", "cwd": "<thư mục>" } },
+  "discover": { "enabled": false, "as": "<tên có khoá>" },
+  "defaults": { "coalesce_ms": 3000, "listener_confirm_s": 60, "wake_timeout_s": 900, "retry_s": 30 },
+  "rules": { "sweep": { "enabled": false, "as": "<tên thư ký>", "every_min": 15 } },
+  "adapter_modules": [] }
+```
+`discover.enabled` tự thêm nhân viên có `runtime.machine` = máy này (adapter theo `runtime.agent`).
+
+**Adapter** (cắm thêm bằng `registerAdapter` hoặc `adapter_modules`: tệp `.mjs` export default `{name, wake(ctx)}`):
+
+| Adapter | Cách đánh thức | Khai báo |
+|---|---|---|
+| `claude-cli` | `claude --resume <session> -p` | `session`, `cwd`, `model`, `args` |
+| `claude-desktop` | dò `local_<uuid>` trong thư mục phiên của ứng dụng ⇒ `claude --resume <cliSessionId> -p` | `session: "local_…"` |
+| `codex` | `codex exec resume <session> -` (thiếu ⇒ `--last`) | `session`, `cwd` |
+| `hermes` | POST JSON tới webhook (https hoặc http localhost), ký HMAC bằng biến môi trường | `url`, `secret_env` |
+| `command` | lệnh tuỳ chỉnh (mảng, không qua shell của bạn), lời nhắc ở stdin + `DBIO_WAKE_*` | `command: ["node","x.mjs"]` |
+
+An toàn: lời nhắc đi qua **stdin** (không bao giờ trên dòng lệnh); mọi tham số phải khớp ký tự an toàn; khoá chỉ ở header `Authorization` (không lên URL, không vào log/trạng thái); nội dung tin chỉ là dữ liệu. Log mỗi nhân viên: `~/.dbio/agentd-logs/<tên>.log`.
+
+### Phiên Desktop (kết quả thử 7/10)
+`claude --resume` trên phiên Claude Desktop (qua `cliSessionId` trong `…/Claude/claude-code-sessions/**/local_*.json`) **chạy được**: thoát 0, trả lời, ghi nối vào đúng tệp hội thoại của phiên. Lưu ý: (1) phiên nghỉ lâu bị **nguội bộ nhớ đệm** ⇒ lượt đầu tính lại toàn bộ ngữ cảnh (một phiên ~470k token tốn ~4,7 USD trên Opus) — nên để phiên nhân viên gọn (tự dọn khi xong thẻ); (2) đừng thức phiên đang chạy dở trong ứng dụng (hai tiến trình cùng ghi một hội thoại); (3) việc app hiện tin mới ngay hay chỉ sau khi mở lại phiên chưa kiểm được bằng mã.
 
 ## Ép vai bằng hook (không trông skill)
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`.

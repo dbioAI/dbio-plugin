@@ -1,10 +1,10 @@
 {
   "name": "dbio-plugin",
-  "version": "0.1.0",
-  "description": "Bộ nhẹ để nhân viên AI / phòng ban làm việc với dbio qua MCP: lệnh dbio-staff, vai PM/nhân viên đọc AI Playbook.",
+  "version": "0.2.0",
+  "description": "Bộ nhẹ để nhân viên AI / phòng ban làm việc với dbio qua MCP: dbio-staff (sổ cái, canh tin, listen đẩy WebSocket, playbook) + daemon dbio-agentd nhận việc.",
   "type": "module",
   "engines": { "node": ">=20" },
-  "bin": { "dbio-staff": "bin/dbio-staff.mjs" },
+  "bin": { "dbio-staff": "bin/dbio-staff.mjs", "dbio-agentd": "bin/dbio-agentd.mjs" },
   "scripts": { "test": "node --test test/*.test.mjs" },
   "license": "UNLICENSED"
 }

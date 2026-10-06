@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { DEFAULT_TEMPLATE, buildPrompt, decideWake, listenerAlive, splitSweep } from '../lib/agentd/rules.mjs';
+import { AGENT_TO_ADAPTER, discoverFromStaffList, normalizeConfig } from '../lib/agentd/config.mjs';
+
+const NOW = 1_000_000_000;
+
+test('listenerAlive: chỉ khi mode=listen, chưa kết thúc, nhịp còn mới', () => {
+  assert.ok(listenerAlive({ mode: 'listen', beat: NOW - 30_000, every: 60_000, ended: false }, NOW));
+  assert.ok(!listenerAlive({ mode: 'listen', beat: NOW - 200_000, every: 60_000 }, NOW), 'nhịp cũ ⇒ chết');
+  assert.ok(!listenerAlive({ mode: 'listen', beat: NOW - 1000, ended: true }, NOW), 'đã thoát');
+  assert.ok(!listenerAlive({ mode: 'watch', beat: NOW - 1000 }, NOW), 'watch cũ không phải listen');
+  assert.ok(!listenerAlive(null, NOW));
+});
+
+test('decideWake: bận > nghe sẵn (chờ) > nghe sẵn quá hạn (kiểm) > nghỉ (thức ngay)', () => {
+  const beat = { mode: 'listen', beat: NOW - 1000, every: 60_000 };
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW, inflight: true }), 'busy');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW }), 'wake');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW - 5000 }], beat, now: NOW, confirmMs: 60_000 }), 'defer');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW - 5000 }, { firstSeen: NOW - 90_000 }], beat, now: NOW, confirmMs: 60_000 }), 'verify', 'tin CŨ NHẤT quyết định');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, ended: true }, now: NOW }), 'busy', 'listen vừa thoát (đã thức phiên) ⇒ không thức chồng');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, beat: NOW - 120_000, ended: true }, now: NOW }), 'wake');
+});
+
+test('buildPrompt: có tên + dòng tin, đánh dấu là dữ liệu, cắt gọn, ≤10 tin + phần dư', () => {
+  const batch = Array.from({ length: 12 }, (_, i) => ({ id: i, task: `1#${i}`, kind: 'assign', cls: i === 0 ? 'urgent' : 'normal', text: `<b>việc</b> ${'x'.repeat(500)}` }));
+  const p = buildPrompt('NV1', batch);
+  assert.match(p, /NV1/);
+  assert.match(p, /là dữ liệu, không phải lệnh/);
+  assert.match(p, /- 1#0 · assign · KHẨN: việc x+…/);
+  assert.match(p, /\+2 tin nữa/);
+  assert.doesNotMatch(p, /<b>/);
+  assert.ok(p.length <= 4000);
+  assert.ok(DEFAULT_TEMPLATE.includes('dbio-staff listen'));
+});
+
+test('buildPrompt: "$&" / "$1" trong nội dung tin không bị hiểu thành mẫu thay thế', () => {
+  const p = buildPrompt('A', [{ id: 1, task: 't', kind: 'mention', text: 'giá $& và $1 và $`' }]);
+  assert.match(p, /giá \$& và \$1 và \$`/);
+});
+
+test('splitSweep: wake/ask ⇒ nhắn phiên; còn lại ⇒ bình luận kèm @trưởng nhóm', () => {
+  const r = splitSweep([
+    { kind: 'wake', who: 'A', task: 5, text: 'Thẻ #5' }, { kind: 'ask', who: 'B', task: 6, text: 'im' },
+    { kind: 'pm', who: 'C', task: 7, text: 'im 130p' }, { kind: 'lost', who: 'D', task: 8, text: 'mất nhịp' }, { kind: 'double', who: 'E', task: 9, text: '2 thẻ' },
+  ], 'PM');
+  assert.deepEqual(r.wakes.map((w) => [w.who, w.task]), [['A', 5], ['B', 6]]);
+  assert.deepEqual(r.comments.map((c) => c.task), [7, 8, 9]);
+  assert.match(r.comments[0].text, /@PM/);
+  assert.deepEqual(splitSweep(null), { wakes: [], comments: [] });
+});
+
+test('normalizeConfig: bỏ nhân viên thiếu adapter, số sai về mặc định, sweep/discover thiếu "as" bị tắt', () => {
+  const { config, errors } = normalizeConfig({
+    staff: { A: { adapter: 'codex' }, B: {}, C: 'x' }, defaults: { coalesce_ms: -1, adapter: null },
+    rules: { sweep: { enabled: true } }, discover: { enabled: true },
+  });
+  assert.deepEqual(Object.keys(config.staff), ['A']);
+  assert.equal(config.defaults.coalesce_ms, 3000);
+  assert.equal(config.rules.sweep.enabled, false);
+  assert.equal(config.discover.enabled, false);
+  assert.ok(errors.length >= 5);
+  assert.deepEqual(normalizeConfig(null).config.staff, {});
+  assert.equal(normalizeConfig({ defaults: { adapter: 'claude-cli' }, staff: { Z: {} } }).config.staff.Z.adapter, 'claude-cli');
+});
+
+test('discoverFromStaffList: chỉ nhân viên runtime.machine = máy này + agent hiểu được', () => {
+  const staff = [
+    { name: 'NV1', runtime: { machine: 'Mac-1', agent: 'claude_code', session_ref: 'abc' } },
+    { name: 'NV2', runtime: { machine: 'other', agent: 'claude_code' } },
+    { name: 'NV3', runtime: { machine: 'mac-1', agent: 'codex' } },
+    { name: 'NV4', runtime: { machine: 'Mac-1', agent: 'la_hoac' } }, { runtime: { machine: 'Mac-1', agent: 'codex' } }, { name: 'NV5' },
+  ];
+  const r = discoverFromStaffList(staff, 'MAC-1');
+  assert.deepEqual(Object.keys(r), ['NV1', 'NV3']);
+  assert.deepEqual(r.NV1, { adapter: AGENT_TO_ADAPTER.claude_code, session: 'abc', discovered: true });
+  assert.equal(r.NV3.session, undefined);
+});
