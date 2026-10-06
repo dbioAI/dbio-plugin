@@ -91,7 +91,7 @@ test('lọc: tin tự mình gửi / bản sao (không phải thư ký) bị bỏ
     const c = srv.conns[0];
     c.send(evt(40, { type: 'mention', kind: 'mention', from: { character_id: 1001 }, text: 'tự nhắc' })); // self
     c.send(evt(41, { type: 'mention', kind: 'mention', copy: true, text: 'bản sao', prio: 'normal' }));   // copy
-    c.send(evt(42, { type: 'mention', kind: 'mention', text: 'ghi chú thường', prio: 'normal' }));       // thường: gom, chưa thức
+    c.send(evt(42, { type: 'children_done', kind: 'children_done', text: 'thẻ con xong', prio: 'normal' }));  // thường: gom, chưa thức
     await waitFor(() => c.received.some((f) => f.op === 'ack' && f.ids.includes(41)));
     await new Promise((r) => setTimeout(r, 200));
     assert.deepEqual(delivered, []);

@@ -77,3 +77,43 @@ test('discoverFromStaffList: chỉ nhân viên runtime.machine = máy này + age
   assert.deepEqual(r.NV1, { adapter: AGENT_TO_ADAPTER.claude_code, session: 'abc', discovered: true });
   assert.equal(r.NV3.session, undefined);
 });
+
+import { contextGuard, contextTokensFromTail, sessionContextTokens } from '../lib/agentd/context-size.mjs';
+import { filterInbox } from '../lib/watch-filter.mjs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getAdapter } from '../lib/agentd/adapters/index.mjs';
+
+test('contextTokensFromTail: usage của tin cuối (input + cache đọc + cache tạo), bỏ dòng cắt dở', () => {
+  const t = ['{"type":"user","message":{}}', '{"message":{"usage":{"input_tokens":2,"cache_read_input_tokens":1000,"cache_creation_input_tokens":500}}}', '{"message":{"usage":{"input_tokens":3,"cache_read_input_tokens":90000,"cache_creation_input_tokens":10}}}', '{"cắt dở "usage'].join('\n');
+  assert.equal(contextTokensFromTail(t), 90013);
+  assert.equal(contextTokensFromTail('không có gì'), null);
+});
+
+test('contextGuard + adapter: phiên > 100k bị CHẶN (không chạy), allow_large mở, phiên nhỏ/không biết cho qua', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'proj-')); mkdirSync(join(root, 'p'), { recursive: true });
+  writeFileSync(join(root, 'p', 'big-1.jsonl'), '{"message":{"usage":{"input_tokens":1,"cache_read_input_tokens":470000,"cache_creation_input_tokens":0}}}\n');
+  writeFileSync(join(root, 'p', 'small-1.jsonl'), '{"message":{"usage":{"input_tokens":1,"cache_read_input_tokens":20000,"cache_creation_input_tokens":0}}}\n');
+  assert.equal(sessionContextTokens('big-1', { root }), 470001);
+  assert.equal(sessionContextTokens('khong-co', { root }), null);
+  assert.equal(contextGuard('big-1', {}, { root }).blocked, true);
+  assert.equal(contextGuard('big-1', { allow_large: true }, { root }).blocked, false);
+  assert.equal(contextGuard('big-1', { max_context_tokens: 500000 }, { root }).blocked, false);
+  assert.equal(contextGuard('small-1', {}, { root }).blocked, false);
+  assert.equal(contextGuard('khong-co', {}, { root }).blocked, false);
+  const r = await getAdapter('claude-cli').wake({ staff: 'N', entry: { session: 'big-1', projects_dir: root }, prompt: 'p' });
+  assert.equal(r.ok, false); assert.equal(r.blocked, true); assert.match(r.detail, /470k/);
+});
+
+test('kênh đẩy: @nhắc trực tiếp = KHẨN (thức ngay, không chờ gom 20 phút); bản sao bị bỏ', () => {
+  const m = { id: 1, kind: 'mention', text: 'ghi chú dài không có dấu hỏi', task: '1#2', at: new Date().toISOString() };
+  assert.equal(filterInbox([m], { mentionUrgent: true }).keep[0].cls, 'urgent');
+  assert.equal(filterInbox([m], {}).keep[0].cls, 'normal');
+  assert.equal(filterInbox([{ ...m, id: 2, state: 'copy' }], { mentionUrgent: true }).keep.length, 0, 'bản sao không phải thư ký bị bỏ');
+});
+
+test('discover: claude_code + session local_ ⇒ adapter claude-desktop', () => {
+  const r = discoverFromStaffList([{ name: 'A', runtime: { machine: 'm', agent: 'claude_code', session_ref: 'local_abc' } }, { name: 'B', runtime: { machine: 'm', agent: 'claude_code', session_ref: 'uuid-1' } }], 'm');
+  assert.equal(r.A.adapter, 'claude-desktop'); assert.equal(r.B.adapter, 'claude-cli');
+});

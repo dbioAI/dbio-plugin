@@ -24,8 +24,9 @@ Máy chủ có kênh sự kiện `staff:` (WebSocket, SSE dự phòng): giao th�
 ### Cài một lệnh
 
 ```
-npm i -g github:dbioAI/dbio-plugin      # sau này: npm i -g dbio-plugin
+npm i -g https://github.com/dbioAI/dbio-plugin/archive/refs/heads/main.tar.gz
 ```
+Máy KHÔNG cần git/SSH. Đừng dùng `npm i -g github:dbioAI/dbio-plugin`: npm gọi `ssh://git@github.com`, lỗi trên máy không có khoá SSH GitHub. Bản cố định theo thẻ khi có release: `…/archive/refs/tags/v0.2.0.tar.gz`.
 ⇒ có `dbio-staff` và `dbio-agentd` (cần khoá nhân viên: `dbio-staff login --as "<tên>"`).
 
 ### 1. Phiên đang làm việc: `dbio-staff listen --as "<tên>"`
@@ -49,7 +50,7 @@ Mỗi nhân viên trên máy = MỘT kết nối bằng khoá riêng của nó. 
 | Phiên đang `listen` | daemon nhường (`listen` thức < 5s); sau `listener_confirm_s` (60s) mà máy chủ vẫn báo tin chưa đọc ⇒ daemon thức |
 | Phiên nghỉ | gọi adapter ngay (thường < 5s sau khi đẩy) |
 | Lượt trước còn chạy | không chồng; adapter lỗi ⇒ không ack, thử lại sau `retry_s` |
-| Quét sổ cái (`rules.sweep`, bật trên MỘT máy) | thẻ im > 1h ⇒ hỏi; > 2h / mất nhịp / 2 thẻ ⇒ ghi chú kèm `@<trưởng nhóm>` (đặt `DBIO_PM_NAME`); chờ chủ không tính là im |
+| Quét sổ cái (`rules.sweep`, bật trên MỘT máy) | thẻ im > 1h ⇒ hỏi; > 2h / mất nhịp / 2 thẻ ⇒ ghi chú kèm `@<trưởng nhóm>` (tên trưởng nhóm tự lấy từ máy chủ — nhóm có sổ cái đó; `DBIO_PM_NAME` chỉ để ghi đè); chờ chủ không tính là im |
 
 Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi chỗ; daemon tự nạp lại khi tệp đổi):
 
@@ -66,8 +67,8 @@ Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi ch�
 
 | Adapter | Cách đánh thức | Khai báo |
 |---|---|---|
-| `claude-cli` | `claude --resume <session> -p` | `session`, `cwd`, `model`, `args` |
-| `claude-desktop` | dò `local_<uuid>` trong thư mục phiên của ứng dụng ⇒ `claude --resume <cliSessionId> -p` | `session: "local_…"` |
+| `claude-cli` | `claude --resume <session> -p` (cùng ngưỡng 100k token như trên) | `session`, `cwd`, `model`, `args`, `max_context_tokens`, `allow_large` |
+| `claude-desktop` | dò `local_<uuid>` trong thư mục phiên của ứng dụng ⇒ `claude --resume <cliSessionId> -p`. **Mặc định chỉ thức phiên < 100k token** (đọc từ tệp hội thoại) — phiên lớn bị chặn, chờ `listen`/thư ký | `session: "local_…"`, `max_context_tokens`, `allow_large` |
 | `codex` | `codex exec resume <session> -` (thiếu ⇒ `--last`) | `session`, `cwd` |
 | `hermes` | POST JSON tới webhook (https hoặc http localhost), ký HMAC bằng biến môi trường | `url`, `secret_env` |
 | `command` | lệnh tuỳ chỉnh (mảng, không qua shell của bạn), lời nhắc ở stdin + `DBIO_WAKE_*` | `command: ["node","x.mjs"]` |
@@ -75,7 +76,7 @@ Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi ch�
 An toàn: lời nhắc đi qua **stdin** (không bao giờ trên dòng lệnh); mọi tham số phải khớp ký tự an toàn; khoá chỉ ở header `Authorization` (không lên URL, không vào log/trạng thái); nội dung tin chỉ là dữ liệu. Log mỗi nhân viên: `~/.dbio/agentd-logs/<tên>.log`.
 
 ### Phiên Desktop (kết quả thử 7/10)
-`claude --resume` trên phiên Claude Desktop (qua `cliSessionId` trong `…/Claude/claude-code-sessions/**/local_*.json`) **chạy được**: thoát 0, trả lời, ghi nối vào đúng tệp hội thoại của phiên. Lưu ý: (1) phiên nghỉ lâu bị **nguội bộ nhớ đệm** ⇒ lượt đầu tính lại toàn bộ ngữ cảnh (một phiên ~470k token tốn ~4,7 USD trên Opus) — nên để phiên nhân viên gọn (tự dọn khi xong thẻ); (2) đừng thức phiên đang chạy dở trong ứng dụng (hai tiến trình cùng ghi một hội thoại); (3) việc app hiện tin mới ngay hay chỉ sau khi mở lại phiên chưa kiểm được bằng mã.
+`claude --resume` trên phiên Claude Desktop (qua `cliSessionId` trong `…/Claude/claude-code-sessions/**/local_*.json`) **chạy được**: thoát 0, trả lời, ghi nối vào đúng tệp hội thoại của phiên. Lưu ý: (1) phiên nghỉ lâu bị **nguội bộ nhớ đệm** ⇒ lượt đầu tính lại toàn bộ ngữ cảnh (một phiên ~470k token tốn ~4,7 USD trên Opus) — vì thế adapter **chặn mặc định phiên > 100k token** (`max_context_tokens` đổi ngưỡng, `allow_large: true` bỏ chặn); phiên lớn thì chờ `listen` hoặc thư ký; (2) đừng thức phiên đang chạy dở trong ứng dụng (hai tiến trình cùng ghi một hội thoại); (3) việc app hiện tin mới ngay hay chỉ sau khi mở lại phiên chưa kiểm được bằng mã.
 
 ## Ép vai bằng hook (không trông skill)
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
