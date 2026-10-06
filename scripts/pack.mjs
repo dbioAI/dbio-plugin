@@ -12,7 +12,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const INCLUDE = ['bin', 'lib', 'skills', '.claude-plugin', 'README.md', 'package.json'];
+const INCLUDE = ['bin', 'lib', 'hooks', 'skills', '.claude-plugin', 'README.md', 'package.json'];
 const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : null; };
 const OUT = arg('--out') ?? join(ROOT, 'dist');
 
