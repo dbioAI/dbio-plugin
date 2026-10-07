@@ -185,3 +185,12 @@ test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionI
   const t = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_mode: 'headless', blank_prompt: 'Xin chào {name} :: {prompt}' }, prompt: '$& $1', spawnFn: s.fn });
   assert.equal(s.calls[1].stdin, 'Xin chào N :: $& $1');
 });
+
+test('#872 nợ 5: mọi tiến trình con của agentd mang DBIO_AGENTD_TURN=1; lời nhắc mặc định cấm bật listen/watch nền', async () => {
+  const { runChild } = await import('../lib/agentd/adapters/util.mjs');
+  const { DEFAULT_TEMPLATE } = await import('../lib/agentd/rules.mjs');
+  let seen; const spawnFn = (bin, args, o) => { seen = o.env; return { pid: 1, stdout: null, stderr: null, stdin: { on() {}, end() {} }, on() {} }; };
+  runChild({ bin: process.execPath, args: [], spawnFn });
+  assert.equal(seen.DBIO_AGENTD_TURN, '1');
+  assert.ok(!/chạy lại lệnh nền/.test(DEFAULT_TEMPLATE) && /KHÔNG bật listen/.test(DEFAULT_TEMPLATE));
+});

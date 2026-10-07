@@ -75,3 +75,15 @@ test('listen --help in tài liệu, không cần khoá', async () => {
   const r = await run(['listen', '--help'], { ...process.env, HOME: tmpdir(), USERPROFILE: tmpdir() });
   assert.equal(r.code, 0); assert.match(r.out, /NGHE kênh sự kiện/);
 });
+
+test('#872 nợ 5: trong lượt thức NGẦM của agentd (DBIO_AGENTD_TURN) listen/watch bị CHẶN (thoát 4) — không để listener mồ côi', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const sb = sandbox(srv.mcpUrl);
+  try {
+    for (const args of [['listen', '--as', 'T', '--max-min', '1'], ['staff', 'watch', '--as', 'T', '--max-min', '1']]) {
+      const r = await run(args, { ...sb.env, DBIO_AGENTD_TURN: '1' });
+      assert.equal(r.code, 4, `${args[0]}: ${r.err}`); assert.match(r.err, /NGẦM|headless/);
+    }
+    assert.equal(srv.conns.length, 0, 'không được mở kênh');
+  } finally { await srv.stop(); }
+});

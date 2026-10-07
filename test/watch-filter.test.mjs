@@ -230,3 +230,12 @@ test('#833 owner_reply (chủ nhắn) chứa chữ duyệt ⇒ vẫn thức; isA
   assert.equal(f([it({ kind: 'owner_reply', text: 'đã duyệt, nhưng thêm chỗ này' })]).keep.length, 1);
   assert.equal(isApproveDecision({ kind: 'mention', text: 'approve' }), false);
 });
+
+test('#872 nợ 3/5: bình luận do CHÍNH MÌNH gửi (ref_id trong outbox) dội lại — kể cả bản sao/@nhắc — bị bỏ; ref_id lạ vẫn giữ', () => {
+  const own = it({ kind: 'mention', ref_id: 777, from_character_id: null, from_user_id: 1 });
+  const other = it({ kind: 'mention', ref_id: 778, from_character_id: null, from_user_id: 1 });
+  const r = f([own, other], { outbox: { 777: Date.now() } });
+  assert.deepEqual(r.drop.map((d) => [d.item.ref_id, d.reason]), [[777, 'self-ref']]);
+  assert.deepEqual(r.keep.map((i) => i.ref_id), [778]);
+  assert.equal(f([own]).keep.length, 1, 'không có outbox ⇒ như cũ');
+});

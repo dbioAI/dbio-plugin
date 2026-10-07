@@ -83,12 +83,13 @@ import { COALESCE_MS, MAX_SHOW, coalesceGate, directGate, filterInbox, formatIte
 import { formatAction, formatNext, pickNext } from '../../lib/secretary.mjs';
 import { runSweep } from '../../lib/secretary-io.mjs';
 import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
-import { endBeat, loadAssigned, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
+import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
   '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce'];
 const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out']);
 const [cmd, ...rest] = pos;
+if (cmd === 'watch' && process.env.DBIO_AGENTD_TURN) die('[watch] chặn: đang trong lượt thức NGẦM của dbio-agentd (headless) — không bật watch nền (listener mồ côi nuốt tin). Xử lý xong thì kết thúc.', 4);
 if (!cmd || flags.help) die(helpOf(import.meta.url), 0);
 
 
@@ -193,6 +194,7 @@ const cmds = {
       await tb('checkpoint', { task_id: id, work_state: { machine: hostname(), ...(g ? { worktree: g.top, branch: g.branch, base: g.base, head: g.head, pushed: g.onRemote.length > 0, dirty: g.dirty.map((l) => l.slice(3)).slice(0, 30) } : {}), ...(flags.deploy ? { deploys: [flags.deploy] } : {}), ...(flags.mig ? { migrations: [flags.mig] } : {}), ...(flags.wait ? { waiting: flags.wait } : {}), next: flags.next } });
       ws = ' · work_state ✓';
     } catch { /* server cũ */ }
+    recordOutbox(WHO, r.comment_id);
     console.log(`ok #${id} hồ sơ ${g?.head ?? '-'}${g && !g.onRemote.length ? ' (CHƯA push)' : ''}${g?.dirty.length ? ` · ${g.dirty.length} file dở` : ''} · comment ${r.comment_id}${ws}`);
   },
 
@@ -227,6 +229,7 @@ const cmds = {
     const f = flags.for == null ? null : String(flags.for).toLowerCase();
     const audience = f == null ? null : /^(người|nguoi|human|chủ|chu)$/.test(f) ? 'human' : f === 'agent' ? 'agent' : die('--for phải là người | agent');
     const r = await tb('comment_add', { task_id: id, body: rest.slice(1).join(' '), ...(audience ? { audience } : {}) });
+    recordOutbox(WHO, r.comment_id); // #872: tin dội lại (kể cả bản sao gửi trưởng nhóm) không được đánh thức chính mình
     console.log(`ok #${id} comment ${r.comment_id}${audience ? ` · cho ${audience === 'human' ? 'người' : 'agent'}` : ''}`);
   },
 
@@ -283,6 +286,7 @@ const cmds = {
     await tb('task_move', { task_id: id, column_id: target.id });
     const r = await tb('comment_add', { task_id: id, body: `📌 GIAO VIỆC → ${to} · ${WHO} · ${nowZ()}\n${brief}`, audience: 'agent', ...(assignMentions(to, WHO).length ? { mentions_staff: assignMentions(to, WHO) } : {}) }); // #679: không @nhắc chính người giao ⇒ tin không dội vào hộp thư người giao
     recordAssign(WHO, id); // #678: lọc mention/assign dội lại ≤2' (+ decision qua touched)
+    recordOutbox(WHO, r.comment_id); // #872: @nhắc trong lời giao việc KHÔNG được đánh thức chính người giao
     console.log(`ok #${id} → Đã giao cho ${to} (comment ${r.comment_id}; trạng thái assigned_unacked CHƯA có — cần BE: staff_assign nhận task_id)`);
   },
 
@@ -350,6 +354,7 @@ const cmds = {
     } else await tb('task_move', { task_id: id, column_name: dest });
     recordTouch(WHO, id);
     await ai('staff_status', { who: WHO, mode: 'set', state: 'idle', note: `xong #${id}` }).catch(() => {});
+    recordOutbox(WHO, r.comment_id);
     console.log(`ok #${id} → ${moved} · ${rnote} · ${deliverables.length} sản phẩm${files.length ? ` (đã tải ${files.length} tệp lên kho)` : ""} · comment ${r.comment_id}`);
   },
 
@@ -518,7 +523,7 @@ const cmds = {
         try { got = await fetchFreshItems(ai, WHO, [...freshIds]); } catch (e) { console.error(`[watch] lỗi tạm: ${e?.message ?? e} — thử lại sau 30s`); await sleep(30_000); continue; }
         const items = got.items;
         const cards = await cardInfo(items.map((e) => taskIdOf(e.task))); // #834: cột thẻ ⇒ bỏ tin thường trên thẻ chờ chủ
-        const { keep, drop, recent: rc } = filterInbox(items, { meId: r.who?.id ?? got.who?.id, meName: WHO, secretary, touched: loadTouched(WHO), assigned: loadAssigned(WHO), recent, columns: Object.fromEntries(Object.entries(cards).map(([k, v]) => [k, v.column])), now });
+        const { keep, drop, recent: rc } = filterInbox(items, { meId: r.who?.id ?? got.who?.id, meName: WHO, secretary, touched: loadTouched(WHO), assigned: loadAssigned(WHO), recent, columns: Object.fromEntries(Object.entries(cards).map(([k, v]) => [k, v.column])), outbox: loadOutbox(WHO), now });
         recent = rc;
         for (const e of items) seen.add(`inbox:${e.id}`);
         copies += drop.filter((d) => d.reason === 'copy').length;

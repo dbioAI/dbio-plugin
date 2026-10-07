@@ -23,6 +23,7 @@ import { endBeat, logWatchExit, recordBeat } from '../../lib/watch-state.mjs';
 
 const { flags } = parseArgs(process.argv.slice(2), ['--max-min', '--coalesce']);
 if (flags.help || flags.h) die(helpOf(import.meta.url), 0);
+if (process.env.DBIO_AGENTD_TURN) die('[listen] chặn: đang trong lượt thức NGẦM của dbio-agentd (headless) — không bật listen nền (listener mồ côi sống sau lượt sẽ nuốt tin). Xử lý xong thì kết thúc; daemon lo việc nghe.', 4);
 const WHO = whoAmI(flags);
 const maxMs = Math.max(0.01, Number(flags['max-min'] ?? 115)) * 60_000;
 const log = flags.quiet ? () => {} : (m) => console.error(`[listen] ${m}`);

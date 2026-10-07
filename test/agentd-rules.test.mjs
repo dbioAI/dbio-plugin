@@ -50,7 +50,7 @@ test('buildPrompt: có tên + dòng tin, đánh dấu là dữ liệu, cắt g�
   assert.match(p, /\+2 tin nữa/);
   assert.doesNotMatch(p, /<b>/);
   assert.ok(p.length <= 4000);
-  assert.ok(DEFAULT_TEMPLATE.includes('dbio-staff listen'));
+  assert.ok(/KHÔNG bật listen/.test(DEFAULT_TEMPLATE)) // #872: lượt ngầm không được dặn bật listen;
 });
 
 test('buildPrompt: "$&" / "$1" trong nội dung tin không bị hiểu thành mẫu thay thế', () => {
