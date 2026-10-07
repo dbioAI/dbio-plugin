@@ -205,6 +205,55 @@ test('phiên TRỐNG (vừa clear): daemon KHÔNG chạy claude -p mà gửi C�
   } finally { d.stop(); try { unlinkSync(keyBeat); } catch { /* chưa có */ } await srv.stop(); }
 });
 
+test('#872 đã CẦU rồi, phiên tự thức và làm: KHÔNG thức trùng — coi tin là đã giao (ack)', async () => {
+  // PM đo NV2 7/10: cầu 11:51:23 → thư ký nhắn → phiên trả lời 11:53:02, nhưng 11:56:13 daemon thức phiên LẦN NỮA
+  // (phiên thức xong hết `blank` ⇒ cổng "đã cầu" cũ không còn áp, rơi xuống wakeNow).
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 10, relay_to: 'TK TEST' } });
+  let blank = true; let activeAgo = null; let clock = Date.now();
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, now: () => clock,
+    makeClient: () => ({
+      ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }),
+      call: async (tool, a) => { posted.push(a); return {}; },
+    }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => blank, activeAgoMs: () => activeAgo, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#9' }));
+    await waitFor(() => posted.length === 1, 8000); // đã cầu thư ký
+    blank = false; activeAgo = 200_000; clock += 300_000; // thư ký nhắn được: phiên thức, ghi hội thoại 200s trước mốc kiểm (SAU lời cầu), quá ACTIVE_MS
+    await waitFor(() => srv.conns[0].received.some((fr) => fr.op === 'ack' && fr.ids.includes(1)), 8000);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(woken.length, 0, 'KHÔNG được thức trùng sau khi phiên đã tự thức');
+    assert.equal(posted.length, 1, 'không cầu lại');
+  } finally { d.stop(); await srv.stop(); }
+});
+
+test('#872 đã cầu mà phiên KHÔNG nhúc nhích: giữ tin, không ack thay phiên', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 10, relay_to: 'TK TEST' } });
+  let clock = Date.now();
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, now: () => clock,
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#9' }));
+    await waitFor(() => posted.length === 1, 8000);
+    clock += 300_000; await new Promise((r) => setTimeout(r, 400));
+    assert.ok(!srv.conns[0].received.some((fr) => fr.op === 'ack' && fr.ids?.includes(1)), 'chưa ack: phiên chưa xử lý');
+    assert.equal(woken.length, 0); assert.equal(posted.length, 1);
+  } finally { d.stop(); await srv.stop(); }
+});
+
 test('blank_mode: "headless" (opt-in) ⇒ vẫn gọi adapter (phiên ẩn), không cầu', async () => {
   const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
   const name = uniq(); const woken = []; const posted = [];
