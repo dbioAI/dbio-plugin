@@ -324,14 +324,14 @@ test('#872 Qa: đã cầu cho thẻ A, phiên tự thức; tin của thẻ B KH�
   } finally { d.stop(); await srv.stop(); }
 });
 
-test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới max_hold_min thì ÉP thức (không im lặng vô hạn)', async () => {
+test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới max_hold_min thì ÉP — nhưng KHÔNG --resume song song: cầu thư ký (Qa)', async () => {
   const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
-  const name = uniq(); const woken = []; const logs = [];
-  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, max_hold_min: 20 } });
+  const name = uniq(); const woken = []; const logs = []; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, max_hold_min: 20, relay_to: 'TK TEST' } });
   let clock = Date.now();
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async () => ({}) }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => false, activeAgoMs: () => 10_000, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -340,9 +340,10 @@ test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới
     srv.conns[0].send(evt(1, { task: '1234#9' }));
     await waitFor(() => logs.some((l) => /HOÃN thức/.test(l)), 8000);
     assert.equal(woken.length, 0);
-    clock += 21 * 60_000;
-    await waitFor(() => woken.length === 1, 8000);
-    assert.ok(logs.some((l) => /ÉP/.test(l)));
+    for (let i = 0; i < 25 && posted.length === 0; i++) { clock += 60_000; await new Promise((r) => setTimeout(r, 80)); } // thời gian trôi liên tục (khoảng trống > 2' = lần hoãn mới)
+    await waitFor(() => posted.length === 1, 8000).catch((e) => { console.error(logs.join(' | ')); throw e; });
+    assert.ok(logs.some((l) => /ÉP/.test(l))); assert.equal(woken.length, 0, 'phiên vẫn đang hoạt động ⇒ không chạy song song');
+    assert.match(posted[0].body, /CẦU KHẨN/);
   } finally { d.stop(); await srv.stop(); }
 });
 
