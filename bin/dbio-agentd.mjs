@@ -70,7 +70,7 @@ const cmds = {
     if (flags.json) { console.log(JSON.stringify({ service_registered: registered, running: alive, ...st })); return; }
     console.log(`dịch vụ: ${registered ? 'đã cài' : 'CHƯA cài'} · daemon: ${alive ? `ĐANG CHẠY (pid ${st.pid}, ${Math.round((Date.now() - st.started) / 60_000)} phút)` : 'KHÔNG chạy'}${st?.machine ? ` · máy ${st.machine}` : ''}`);
     for (const e of st?.config_errors ?? []) console.log(`⚠️ cấu hình: ${e}`);
-    for (const [n, s] of Object.entries(st?.staff ?? {})) console.log(`  ${n} · ${s.adapter}${s.discovered ? ' (tự dò)' : ''} · ${s.connected ? `nối ${s.transport}` : 'MẤT KẾT NỐI'} · thức ${s.wakes} lần${s.last_wake_at ? ` (cuối ${ageMin(s.last_wake_at)}p trước)` : ''}${s.queued ? ` · chờ ${s.queued}` : ''}${s.last_error ? ` · ⚠️ ${s.last_error}` : ''}`);
+    for (const [n, s] of Object.entries(st?.staff ?? {})) console.log(`  ${n} · ${s.adapter}${s.discovered ? ' (tự dò)' : ''} · ${s.connected ? `nối ${s.transport}` : 'MẤT KẾT NỐI'} · thức ${s.wakes} lần${s.last_wake_at ? ` (cuối ${ageMin(s.last_wake_at)}p trước)` : ''}${s.queued ? ` · chờ ${s.queued}` : ''}${s.hold ? ` · ⏸ hoãn: ${s.hold}` : ''}${s.last_error ? ` · ⚠️ ${s.last_error}` : ''}`);
     if (!Object.keys(st?.staff ?? {}).length && alive) console.log('  (chưa có nhân viên nào — xem cấu hình)');
   },
 

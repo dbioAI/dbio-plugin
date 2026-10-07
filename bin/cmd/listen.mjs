@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { client, die, helpOf, parseArgs, whoAmI } from '../../lib/common.mjs';
+import { makeOwnCommentCheck } from '../../lib/own-comment.mjs';
 import { makeStaleCheck } from '../../lib/stale-card.mjs';
 import { formatItem } from '../../lib/watch-filter.mjs';
 import { streamDir } from '../../lib/stream/cursor.mjs';
@@ -47,7 +48,7 @@ try {
   s = runStream({
     name: WHO, consumer: 'listen', secretary: !!flags.secretary, sse: !!flags.sse, fresh: !!flags.fresh, log,
     coalesceMs: flags.coalesce != null ? Number(flags.coalesce) : 1500,
-    ackDelivered: false, isStale: makeStaleCheck((t, a) => c.call(t, a), { as: WHO }),
+    ackDelivered: false, isOwn: makeOwnCommentCheck((t, a) => c.call(t, a), { as: WHO }), isStale: makeStaleCheck((t, a) => c.call(t, a), { as: WHO }),
     ackFallback: (ids) => c.ai('staff_inbox_ack', { who: WHO, ids }),
     deliver: async (batch) => {
       for (const it of batch) console.log(formatItem(it, null));

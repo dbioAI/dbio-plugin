@@ -323,3 +323,44 @@ test('#872 Qa: đã cầu cho thẻ A, phiên tự thức; tin của thẻ B KH�
     await waitFor(() => woken.length === 1, 8000);
   } finally { d.stop(); await srv.stop(); }
 });
+
+test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới max_hold_min thì ÉP thức (không im lặng vô hạn)', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; const logs = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, max_hold_min: 20 } });
+  let clock = Date.now();
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async () => ({}) }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => false, activeAgoMs: () => 10_000, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#9' }));
+    await waitFor(() => logs.some((l) => /HOÃN thức/.test(l)), 8000);
+    assert.equal(woken.length, 0);
+    clock += 21 * 60_000;
+    await waitFor(() => woken.length === 1, 8000);
+    assert.ok(logs.some((l) => /ÉP/.test(l)));
+  } finally { d.stop(); await srv.stop(); }
+});
+
+test('#872 Mac: thức LỖI xác thực (OAuth hết hạn) ⇒ báo KẸT lên thẻ + nhờ thư ký, không im lặng', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'TK TEST', retry_s: 1 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { posted.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => false, activeAgoMs: () => null, wake: async () => ({ ok: false, detail: 'OAuth session expired — please run claude login' }) }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#9' }));
+    await waitFor(() => posted.length >= 1, 8000);
+    assert.match(posted[0].body, /KẸT/); assert.match(posted[0].body, /ĐĂNG NHẬP/); assert.match(posted[0].body, /@TK TEST/); assert.equal(posted[0].task_id, 9);
+    await new Promise((r) => setTimeout(r, 1500)); assert.equal(posted.length, 1, '1 lần / giờ');
+  } finally { d.stop(); await srv.stop(); }
+});
