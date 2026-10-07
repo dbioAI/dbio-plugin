@@ -150,3 +150,11 @@ test('buildRelayMessage (Qa): chỉ tin CÙNG thẻ, @/markdown/HTML trong tin b
   assert.match(m, /＠Sếp/);
   assert.equal((m.match(/@TK TEST/g) || []).length, 1, 'chỉ một @ hợp lệ: tên thư ký');
 });
+
+test('#872 nợ 6: listen còn sống, tin quá confirm nhưng phiên đang ghi ⇒ busy (KHÔNG --resume song song); phiên im ⇒ verify', () => {
+  const beat = { mode: 'listen', beat: NOW - 1000, every: 60_000 };
+  const batch = [{ firstSeen: NOW - 90_000 }];
+  assert.equal(decideWake({ batch, beat, now: NOW, confirmMs: 60_000, activeAgoMs: 20_000 }), 'busy');
+  assert.equal(decideWake({ batch, beat, now: NOW, confirmMs: 60_000, activeAgoMs: 20 * 60_000 }), 'verify');
+  assert.equal(decideWake({ batch, beat, now: NOW, confirmMs: 60_000, activeAgoMs: null }), 'verify');
+});

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -89,7 +89,7 @@ test('claude-desktop: local_<uuid> ⇒ cliSessionId + cwd lấy từ tệp phiê
   const dir = join(root, 'acc', 'org'); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'local_aaa.json'), JSON.stringify({ sessionId: 'local_aaa', cliSessionId: 'cli-111', cwd: 'D:\\x', title: 't' }));
   writeFileSync(join(dir, 'local_hong.json'), '{không phải json');
-  assert.deepEqual(resolveDesktopSession('local_aaa', [root]), { cliSessionId: 'cli-111', blank: false, cwd: 'D:\\x', title: 't' });
+  assert.deepEqual(resolveDesktopSession('local_aaa', [root]), { cliSessionId: 'cli-111', blank: false, cwd: 'D:\\x', title: 't', lastActivityAt: null });
   assert.equal(resolveDesktopSession('local_hong', [root]), null);
   assert.equal(resolveDesktopSession('local_khong', [root]), null);
   const s = fakeSpawn();
@@ -193,4 +193,13 @@ test('#872 nợ 5: mọi tiến trình con của agentd mang DBIO_AGENTD_TURN=1;
   runChild({ bin: process.execPath, args: [], spawnFn });
   assert.equal(seen.DBIO_AGENTD_TURN, '1');
   assert.ok(!/chạy lại lệnh nền/.test(DEFAULT_TEMPLATE) && /KHÔNG bật listen/.test(DEFAULT_TEMPLATE));
+});
+
+test('#872 nợ 6: activeAgoMs lấy MIN(tệp hội thoại, lastActivityAt của ứng dụng) — lượt đang chạy công cụ lâu (tệp cũ) vẫn bị coi là bận', () => {
+  const root = mkdtempSync(join(tmpdir(), 'act6-')); const dir = join(root, 'a'); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'local_act6.json'), JSON.stringify({ sessionId: 'local_act6', cliSessionId: 'act-cli-6', lastActivityAt: Date.now() - 5000 }));
+  const proj = join(root, 'proj'); mkdirSync(join(proj, 'p'), { recursive: true }); const f = join(proj, 'p', 'act-cli-6.jsonl'); writeFileSync(f, '{}\n');
+  const old = new Date(Date.now() - 3_600_000); utimesSync(f, old, old);
+  const ms = getAdapter('claude-desktop').activeAgoMs({ session: 'local_act6', sessions_dir: root, projects_dir: proj });
+  assert.ok(ms != null && ms < 20_000, `ms=${ms}`);
 });
