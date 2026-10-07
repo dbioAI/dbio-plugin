@@ -556,7 +556,7 @@ const cmds = {
         const head = `⚡ ${nUrg} khẩn · ${show.length - nUrg} thường${acts.length ? ` · ${acts.length} việc quét sổ cái` : ''}${left.length ? ` · còn ${left.length} tin chờ lượt sau` : ''}${copyNote()} · ${ackNote}`;
         await finish(0, [head, ...show.map((i) => formatItem(i, cols.get(taskIdOf(i.task))))].concat(acts.map(formatAction)).join('\n'));
       }
-      const resting = r.duty?.mode === 'off'; // #660: server báo Nghỉ; thiếu trường = đang Trực
+      const resting = !secretary && r.duty?.mode === 'off'; // #660: server báo Nghỉ; thiếu trường = đang Trực · #872: thư ký KHÔNG nghỉ (cầu khẩn phải thức ngay)
       const nap = (r.discuss_ai?.count ?? 0) > 0 ? FAST : resting ? REST : SLOW; // #759: bỏ owner_active khỏi FAST
       recordBeat(WHO, { every: nap });
       await sleep(nap);
