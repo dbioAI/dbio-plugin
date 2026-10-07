@@ -343,7 +343,7 @@ test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới
     for (let i = 0; i < 25 && posted.length === 0; i++) { clock += 60_000; await new Promise((r) => setTimeout(r, 80)); } // thời gian trôi liên tục (khoảng trống > 2' = lần hoãn mới)
     await waitFor(() => posted.length === 1, 8000).catch((e) => { console.error(logs.join(' | ')); throw e; });
     assert.ok(logs.some((l) => /ÉP/.test(l))); assert.equal(woken.length, 0, 'phiên vẫn đang hoạt động ⇒ không chạy song song');
-    assert.match(posted[0].body, /CẦU KHẨN/);
+    assert.match(posted[0].body, /BẬN/); assert.ok(!/VỪA CLEAR/.test(posted[0].body)); assert.ok(logs.some((l) => /đang BẬN/.test(l)) && !logs.some((l) => /phiên TRỐNG/.test(l)));
   } finally { d.stop(); await srv.stop(); }
 });
 

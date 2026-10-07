@@ -158,3 +158,10 @@ test('#872 nợ 6: listen còn sống, tin quá confirm nhưng phiên đang ghi 
   assert.equal(decideWake({ batch, beat, now: NOW, confirmMs: 60_000, activeAgoMs: 20 * 60_000 }), 'verify');
   assert.equal(decideWake({ batch, beat, now: NOW, confirmMs: 60_000, activeAgoMs: null }), 'verify');
 });
+
+test('#872: cầu cho phiên BẬN (ép sau hoãn) — nói "đang bận, N tin chưa đọc", KHÔNG "vừa clear", KHÔNG bảo nạp lại vai', () => {
+  const m = buildRelayMessage({ name: 'DEV X', session: 'local_s', to: 'TK TEST', busy: true, batch: [{ task: '9#3', kind: 'mention', text: 'hi' }, { task: '9#3', kind: 'assign', text: 'yo' }] });
+  assert.match(m, /BẬN/); assert.match(m, /2 tin chưa đọc trên 9#3/); assert.match(m, /@TK TEST/);
+  assert.ok(!/VỪA CLEAR|vừa được clear|Nạp vai: dbio-staff|whoami/.test(m), m);
+  assert.match(buildRelayMessage({ name: 'A', session: 'local_s', to: 'T', batch: [{ task: '9#3', kind: 'mention', text: 'hi' }] }), /VỪA CLEAR/);
+});
