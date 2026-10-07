@@ -24,7 +24,7 @@ const run = (args, env) => new Promise((resolve) => {
   run.last = p;
 });
 
-test('listen: assign tới ⇒ in tin + thoát 0 NGAY (<5s kể từ lúc đẩy), con trỏ + nhịp được ghi, ack gửi đi', async () => {
+test('listen: assign tới ⇒ in tin + thoát 0 NGAY (<5s kể từ lúc đẩy), con trỏ + nhịp được ghi, CHƯA ack (chờ phiên xử lý)', async () => {
   const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
   const sb = sandbox(srv.mcpUrl);
   try {
@@ -36,7 +36,8 @@ test('listen: assign tới ⇒ in tin + thoát 0 NGAY (<5s kể từ lúc đẩy
     assert.ok(Date.now() - t0 < 5000, `thức sau ${Date.now() - t0}ms`);
     assert.match(r.out, /1#5/); assert.match(r.out, /khẩn/);
     assert.ok(!r.out.includes(KEY) && !r.err.includes(KEY));
-    assert.ok(srv.conns[0].received.some((f) => f.op === 'ack' && f.ids.includes(5)));
+    assert.ok(!srv.conns[0].received.some((f) => f.op === 'ack'), 'listen KHÔNG ack ngay (phiên có thể vừa clear) — #872');
+    assert.deepEqual(JSON.parse(readFileSync(join(sb.home, 'stream', 'T.listen.pending.json'), 'utf8')).ids, [5], 'id chờ ack lưu đĩa');
     assert.equal(JSON.parse(readFileSync(join(sb.home, 'stream', 'T.listen.cursor.json'), 'utf8')).cursor, 5);
     const beat = JSON.parse(readFileSync(join(sb.home, '.dbio', 'staff-keys', 'T.alive.json'), 'utf8'));
     assert.equal(beat.ended, true); assert.equal(beat.mode, 'listen');

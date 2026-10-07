@@ -20,7 +20,14 @@ test('decideWake: bận > nghe sẵn (chờ) > nghe sẵn quá hạn (kiểm) > 
   assert.equal(decideWake({ batch: [{ firstSeen: NOW - 5000 }], beat, now: NOW, confirmMs: 60_000 }), 'defer');
   assert.equal(decideWake({ batch: [{ firstSeen: NOW - 5000 }, { firstSeen: NOW - 90_000 }], beat, now: NOW, confirmMs: 60_000 }), 'verify', 'tin CŨ NHẤT quyết định');
   assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, ended: true }, now: NOW }), 'busy', 'listen vừa thoát (đã thức phiên) ⇒ không thức chồng');
-  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, beat: NOW - 120_000, ended: true }, now: NOW }), 'wake');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, beat: NOW - 700_000, ended: true }, now: NOW }), 'verify', 'listen thoát quá hạn mà tin chưa ack ⇒ kiểm + giao lại');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: { ...beat, ended: true }, now: NOW, blank: true }), 'verify', 'phiên trống (vừa clear): bỏ qua mọi chờ, chỉ kiểm tin chưa đọc rồi thức ngay dù listen cũ vừa thoát');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat, now: NOW, blank: true }), 'verify', 'kể cả listen cũ còn sống sau clear');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW, inflight: true, blank: true }), 'busy', 'không chồng lượt');
+  const ended = { ...beat, beat: NOW - 700_000, ended: true };
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW }), 'verify', 'quá hạn giao lại 10 phút (mặc định)');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW, activeAgoMs: 30_000 }), 'busy', 'phiên đang GHI hội thoại ⇒ đang làm, không giao lại dù quá hạn');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW, activeAgoMs: 20 * 60_000 }), 'verify', 'phiên im lâu ⇒ giao lại');
 });
 
 test('buildPrompt: có tên + dòng tin, đánh dấu là dữ liệu, cắt gọn, ≤10 tin + phần dư', () => {
@@ -111,6 +118,11 @@ test('kênh đẩy: @nhắc trực tiếp = KHẨN (thức ngay, không chờ go
   assert.equal(filterInbox([m], { mentionUrgent: true }).keep[0].cls, 'urgent');
   assert.equal(filterInbox([m], {}).keep[0].cls, 'normal');
   assert.equal(filterInbox([{ ...m, id: 2, state: 'copy' }], { mentionUrgent: true }).keep.length, 0, 'bản sao không phải thư ký bị bỏ');
+});
+
+test('discover: tên nhân viên từ máy chủ chứa ký tự nguy hiểm bị bỏ (đi vào lời nhắc)', () => {
+  const r = discoverFromStaffList([{ name: 'A" ; rm -rf $(x)', runtime: { machine: 'm', agent: 'codex' } }, { name: 'DEV AI CHARACTER', runtime: { machine: 'm', agent: 'codex' } }, { name: 'x'.repeat(61), runtime: { machine: 'm', agent: 'codex' } }], 'm');
+  assert.deepEqual(Object.keys(r), ['DEV AI CHARACTER']);
 });
 
 test('discover: claude_code + session local_ ⇒ adapter claude-desktop', () => {

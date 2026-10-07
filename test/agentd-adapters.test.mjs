@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { adapterNames, getAdapter, loadAdapterModules, registerAdapter } from '../lib/agentd/adapters/index.mjs';
-import { resolveDesktopSession } from '../lib/agentd/adapters/claude-desktop.mjs';
+import { isBlank, resolveDesktopSession, sessionIdFromOutput } from '../lib/agentd/adapters/claude-desktop.mjs';
 import { urlAllowed } from '../lib/agentd/adapters/hermes.mjs';
 import { SAFE_ARG, assertSafeArgs, resolveBin, runChild } from '../lib/agentd/adapters/util.mjs';
 
@@ -89,7 +89,7 @@ test('claude-desktop: local_<uuid> ⇒ cliSessionId + cwd lấy từ tệp phiê
   const dir = join(root, 'acc', 'org'); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'local_aaa.json'), JSON.stringify({ sessionId: 'local_aaa', cliSessionId: 'cli-111', cwd: 'D:\\x', title: 't' }));
   writeFileSync(join(dir, 'local_hong.json'), '{không phải json');
-  assert.deepEqual(resolveDesktopSession('local_aaa', [root]), { cliSessionId: 'cli-111', cwd: 'D:\\x', title: 't' });
+  assert.deepEqual(resolveDesktopSession('local_aaa', [root]), { cliSessionId: 'cli-111', blank: false, cwd: 'D:\\x', title: 't' });
   assert.equal(resolveDesktopSession('local_hong', [root]), null);
   assert.equal(resolveDesktopSession('local_khong', [root]), null);
   const s = fakeSpawn();
@@ -149,4 +149,37 @@ test('resolveBin: tên trần ⇒ đường dẫn tuyệt đối trong PATH, KH�
   const old = process.cwd(); process.chdir(evil);
   try { same(resolveBin('tool861', env), join(d, 'tool861' + ext)); assert.equal(resolveBin('tool861', { PATH: '.' }), 'tool861'); } finally { process.chdir(old); }
   assert.equal(resolveBin('./x', env), './x'); assert.equal(resolveBin('khong-co-861', env), 'khong-co-861');
+});
+
+test('claude-desktop activeAgoMs: mtime tệp hội thoại của phiên (đang ghi ⇒ nhỏ), không biết ⇒ null', () => {
+  const root = mkdtempSync(join(tmpdir(), 'act-')); const dir = join(root, 'a'); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'local_act1.json'), JSON.stringify({ sessionId: 'local_act1', cliSessionId: 'act-cli-1' }));
+  const proj = join(root, 'proj'); mkdirSync(join(proj, 'p'), { recursive: true }); writeFileSync(join(proj, 'p', 'act-cli-1.jsonl'), '{}\n');
+  const ad = getAdapter('claude-desktop');
+  const ms = ad.activeAgoMs({ session: 'local_act1', sessions_dir: root, projects_dir: proj });
+  assert.ok(ms != null && ms > -2000 && ms < 10_000);
+  assert.equal(ad.activeAgoMs({ session: 'local_khong', sessions_dir: root }), null);
+  assert.equal(ad.activeAgoMs({}), null);
+});
+
+test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionId): KHÔNG trả null, KHÔNG --resume, chạy claude -p phiên mới trong cwd của tệp', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'blank-')); const dir = join(root, 'a', 'o'); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'local_blank1.json'), JSON.stringify({ sessionId: 'local_blank1', cwd: 'D:\\proj', priorCliSessionIds: ['cu-111', 'cu-222'] }));
+  writeFileSync(join(dir, 'local_full1.json'), JSON.stringify({ sessionId: 'local_full1', cliSessionId: 'cli-9', cwd: 'D:\\proj' }));
+  const r0 = resolveDesktopSession('local_blank1', [root]);
+  assert.ok(r0, 'không được null'); assert.equal(r0.blank, true); assert.equal(r0.cliSessionId, null); assert.equal(r0.cwd, 'D:\\proj');
+  assert.equal(resolveDesktopSession('local_full1', [root]).blank, false);
+  assert.equal(isBlank({ session: 'local_blank1', sessions_dir: root }), true); assert.equal(isBlank({ session: 'local_full1', sessions_dir: root }), false);
+  assert.equal(isBlank({ session: 'uuid-x' }), false); assert.equal(isBlank({}), false);
+  const s = fakeSpawn();
+  const r = await getAdapter('claude-desktop').wake({ staff: 'MAC NV1', entry: { session: 'local_blank1', sessions_dir: root, args: ['--permission-mode', 'acceptEdits'] }, prompt: 'PM giao thẻ #632', spawnFn: s.fn });
+  assert.ok(r.ok && r.blank);
+  assert.deepEqual(s.calls[0].args, ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits']);
+  assert.ok(!s.calls[0].args.includes('--resume') && !JSON.stringify(s.calls[0].args).includes('cu-111'), 'cấm --resume priorCliSessionIds');
+  assert.equal(s.calls[0].opts.cwd, 'D:\\proj');
+  assert.match(s.calls[0].stdin, /vừa được CLEAR/); assert.match(s.calls[0].stdin, /MAC NV1/); assert.match(s.calls[0].stdin, /next --take/); assert.match(s.calls[0].stdin, /PM giao thẻ #632/);
+  assert.equal((await r.running).code, 0);
+  assert.equal(sessionIdFromOutput('{"type":"result","session_id":"abc-123-def","x":1}'), 'abc-123-def'); assert.equal(sessionIdFromOutput('rác'), null);
+  const t = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_prompt: 'Xin chào {name} :: {prompt}' }, prompt: '$& $1', spawnFn: s.fn });
+  assert.equal(s.calls[1].stdin, 'Xin chào N :: $& $1');
 });

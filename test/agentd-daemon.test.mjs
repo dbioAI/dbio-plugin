@@ -172,3 +172,28 @@ test('adapter chạy hỏng NGAY (lệnh không có / thoát mã 1): tin KHÔNG 
     assert.equal([...d.streams.values()][0].s.queue.length, 1);
   } finally { d.stop(); await srv.stop(); }
 });
+
+test('phiên TRỐNG (vừa clear) + listen cũ vừa nuốt tin (beat ended, chưa ack): daemon thức NGAY < 10s, không chờ hạn giao lại', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 10 } });
+  let blank = true;
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }) }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => blank, wake: async (ctx) => { woken.push({ at: Date.now(), prompt: ctx.prompt }); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  const keyBeat = keyFile(name).replace(/\.json$/, '.alive.json');
+  try {
+    recordBeat(name, { mode: 'listen', every: 60_000 }); endBeat(name); // listen vừa thoát (đã in tin, chưa ack)
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    const t0 = Date.now(); srv.conns[0].send(evt(1, { text: '@MAC NV1 làm thẻ' }));
+    await waitFor(() => woken.length === 1, 10_000);
+    assert.ok(woken[0].at - t0 < 10_000); assert.match(woken[0].prompt, /làm thẻ/);
+    // phiên KHÔNG trống (đang xử lý) + listen vừa thoát ⇒ đợi hạn giao lại (10 phút) ⇒ chưa thức
+    blank = false; d.st.get(name).probeAt = 0; srv.conns[0].send(evt(2, { text: 'tin kế' }));
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(woken.length, 1);
+  } finally { d.stop(); try { unlinkSync(keyBeat); } catch { /* chưa có */ } await srv.stop(); }
+});
