@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { loadCursor } from '../lib/stream/cursor.mjs';
+import { loadCursor, saveCursor } from '../lib/stream/cursor.mjs';
 import { runStream } from '../lib/stream/session.mjs';
 import { evt, hello, startFakeServer, waitFor } from './helpers/fake-stream-server.mjs';
 
@@ -167,6 +167,27 @@ test('deliver chậm: không chạy chồng 2 lượt lên cùng một lô (tick
   const s = runStream({ name: uniq(), consumer: 'e2e', cfg: { key: KEY, mcp_url: srv.mcpUrl }, coalesceMs: 0, tickMs: 10, log: () => {}, deliver: async () => { calls++; active++; maxActive = Math.max(maxActive, active); await new Promise((r) => setTimeout(r, 300)); active--; return true; } });
   s.done.catch(() => {});
   try { await waitFor(() => s.queue.length === 0 && calls >= 1, 3000); await new Promise((r) => setTimeout(r, 200)); assert.equal(maxActive, 1); assert.equal(calls, 1); } finally { s.stop(); await srv.stop(); }
+});
+
+test('#872 fresh dù ĐÃ CÓ con trỏ của phiên trước trên đĩa: backlog cũ KHÔNG đánh thức phiên mới', async () => {
+  // Ca thật 7/10: chủ clear phiên ⇒ phiên mới chạy `listen --fresh`, nhưng máy đã có con trỏ của phiên TRƯỚC
+  // ⇒ trước khi sửa, --fresh bị bỏ qua và backlog tích luỹ lúc phiên vắng mặt xả ra đánh thức ngay.
+  const srv = await startFakeServer({ onConnect: (c) => { c.send(hello(100)); c.send(evt(50)); c.send(evt(60)); c.send({ type: 'caught_up', v: 1, cursor: 100, more: false }); } });
+  const name = uniq(); const host = new URL(srv.mcpUrl).hostname;
+  saveCursor(name, 'e2e', host, 40); // phiên trước đã nghe tới 40
+  const { s, delivered } = open(srv, name, { fresh: true });
+  try {
+    await waitFor(() => loadCursor(name, 'e2e', host) === 100, 4000); // hello ⇒ nhảy thẳng con trỏ máy chủ
+    await new Promise((r) => setTimeout(r, 600));
+    assert.deepEqual(delivered, []);
+  } finally { s.stop(); await srv.stop(); }
+});
+
+test('#872 fresh KHÔNG áp cho lần NỐI LẠI: tin đến lúc mất kênh vẫn được giao', async () => {
+  let round = 0;
+  const srv = await startFakeServer({ onConnect: (c) => { round++; if (round === 1) { c.send(hello(100)); c.send({ type: 'caught_up', v: 1, cursor: 100, more: false }); setTimeout(() => c.close(1011), 150); } else { c.send(hello(200)); c.send(evt(150)); } } });
+  const { s, delivered } = open(srv, uniq(), { fresh: true });
+  try { await waitFor(() => delivered.length >= 1, 6000); assert.deepEqual(delivered.map((d) => d.id), [150]); } finally { s.stop(); await srv.stop(); }
 });
 
 test('fresh lần đầu: bỏ tin chưa đọc CŨ nhưng giữ tin còn mới (freshKeepMs); nối lại không xử lý lại', async () => {
