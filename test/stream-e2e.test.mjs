@@ -197,3 +197,20 @@ test('fresh lần đầu: bỏ tin chưa đọc CŨ nhưng giữ tin còn mới 
   const { s, delivered } = open(srv, uniq(), { fresh: true, freshKeepMs: 6 * 3_600_000 });
   try { await waitFor(() => delivered.length >= 1, 4000); await new Promise((r) => setTimeout(r, 1800)); assert.deepEqual(delivered.map((d) => d.id), [60]); } finally { s.stop(); await srv.stop(); }
 });
+
+test('#872 nợ 4: backlog nhắc CŨ trên thẻ đã Xong ⇒ bỏ + ack, KHÔNG thức; nhắc cũ thẻ đang làm vẫn thức', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const delivered = [];
+  const isStale = async (it) => (it.task === '1#50' ? 'card-done' : null);
+  const s = runStream({ name, consumer: 'e2e', cfg: { key: KEY, mcp_url: srv.mcpUrl }, coalesceMs: 0, tickMs: 20, log: () => {}, isStale, deliver: async (b) => { delivered.push(...b); return true; } });
+  s.done.catch(() => {});
+  try {
+    await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(7, { kind: 'mention', task: '1#50', text: 'nhắc cũ' }));
+    srv.conns[0].send(evt(8, { kind: 'mention', task: '1#51', text: 'nhắc thật' }));
+    await waitFor(() => delivered.length === 1, 3000);
+    assert.deepEqual(delivered.map((x) => x.id), [8]);
+    await waitFor(() => srv.conns[0].received.some((f) => f.op === 'ack' && f.ids.includes(7)), 3000);
+    assert.equal(s.state.dropped, 1);
+  } finally { s.stop(); await srv.stop(); }
+});
