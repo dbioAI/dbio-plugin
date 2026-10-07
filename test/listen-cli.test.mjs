@@ -9,12 +9,14 @@ import { evt, hello, startFakeServer, waitFor } from './helpers/fake-stream-serv
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'dbio-staff.mjs');
 const KEY = 'sk_p2_abcdefghijklmnopqrstuvwxyz0123456789';
+// bộ gate phải xanh BẤT KỂ ai chạy: khi `npm test` chạy trong lượt thức ngầm của agentd thì DBIO_AGENTD_TURN=1 di truyền sang mọi tiến trình con ⇒ listen/watch thoát 4
+const cleanEnv = () => { const e = { ...process.env }; delete e.DBIO_AGENTD_TURN; return e; };
 
 function sandbox(mcpUrl) {
   const home = mkdtempSync(join(tmpdir(), 'listen-home-'));
   mkdirSync(join(home, '.dbio', 'staff-keys'), { recursive: true });
   writeFileSync(join(home, '.dbio', 'staff-keys', 'T.json'), JSON.stringify({ key: KEY, mcp_url: mcpUrl }));
-  return { home, env: { ...process.env, HOME: home, USERPROFILE: home, DBIO_STREAM_DIR: join(home, 'stream'), DBIO_WATCH_LOG: join(home, 'watch-log.jsonl') } };
+  return { home, env: { ...cleanEnv(), HOME: home, USERPROFILE: home, DBIO_STREAM_DIR: join(home, 'stream'), DBIO_WATCH_LOG: join(home, 'watch-log.jsonl') } };
 }
 const run = (args, env) => new Promise((resolve) => {
   const p = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -72,7 +74,7 @@ test('listen: khoá thiếu ⇒ thoát 2, thông báo rõ; hết giờ ⇒ 1 dò
 });
 
 test('listen --help in tài liệu, không cần khoá', async () => {
-  const r = await run(['listen', '--help'], { ...process.env, HOME: tmpdir(), USERPROFILE: tmpdir() });
+  const r = await run(['listen', '--help'], { ...cleanEnv(), HOME: tmpdir(), USERPROFILE: tmpdir() });
   assert.equal(r.code, 0); assert.match(r.out, /NGHE kênh sự kiện/);
 });
 

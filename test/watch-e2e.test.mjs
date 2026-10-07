@@ -53,7 +53,7 @@ async function runWatch(state, who, extra = []) {
   mkdirSync(join(home, '.dbio', 'staff-keys'), { recursive: true });
   writeFileSync(join(home, '.dbio', 'staff-keys', `${who.replace(/[^\p{L}\p{N}_-]/gu, '_')}.json`), JSON.stringify({ who, store_id: 1, mcp_url: f.url, key: 'sk_test' }));
   writeFileSync(join(home, '.dbio', 'watch.json'), JSON.stringify({ secretaries: ['THƯ KÝ'] }));
-  const env = { ...process.env, USERPROFILE: home, HOME: home, DBIO_WATCH_LOG: join(home, 'watch-log.jsonl'), DBIO_BOARD: '1001' };
+  const env = { ...process.env, DBIO_AGENTD_TURN: '', USERPROFILE: home, HOME: home, DBIO_WATCH_LOG: join(home, 'watch-log.jsonl'), DBIO_BOARD: '1001' };
   const child = spawn(process.execPath, [BIN, 'staff', '--as', who, 'watch', '--max-min', '0.03', '--slow', '1', '--fast', '1', '--coalesce', '0', ...extra], { env });
   let out = ''; let err = '';
   child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { err += d; });
