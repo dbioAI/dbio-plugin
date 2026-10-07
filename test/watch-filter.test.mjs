@@ -239,3 +239,8 @@ test('#872 nợ 3/5: bình luận do CHÍNH MÌNH gửi (ref_id trong outbox) d�
   assert.deepEqual(r.keep.map((i) => i.ref_id), [778]);
   assert.equal(f([own]).keep.length, 1, 'không có outbox ⇒ như cũ');
 });
+
+test('#872 Qa: self-ref chỉ áp cho tin loại bình luận/@nhắc — assign/decision có ref_id trùng số vẫn giữ', () => {
+  const r = f([it({ kind: 'assign', ref_id: 777 }), it({ kind: 'decision', ref_id: 777, task: '1001#701' })], { outbox: { 777: Date.now() } });
+  assert.equal(r.drop.length, 0);
+});

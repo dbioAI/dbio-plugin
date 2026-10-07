@@ -10,7 +10,7 @@ test('#872 nợ 4: nhắc CŨ trên thẻ đã Xong ⇒ card-done; thẻ không 
   const c = mk((a) => (a.task_id === 1 ? { task: { column: { name: 'Xong' } } } : a.task_id === 2 ? { task: { column: { name: 'Đang làm' } } } : Promise.reject(Object.assign(new Error('từ chối: không tìm thấy thẻ'), { code: 'NOT_FOUND' }))));
   assert.equal(await c({ kind: 'mention', task: '9#1', at: old }), 'card-done');
   assert.equal(await c({ kind: 'mention', task: '9#2', at: old }), null);
-  assert.equal(await c({ kind: 'owner_reply', task: '9#3', at: old }), 'card-gone');
+  assert.equal(await c({ kind: 'mention', task: '9#3', at: old }), 'card-gone');
   assert.equal(c.calls[0].as, 'Qa'); assert.equal(c.calls[0].profile_id, 9);
 });
 test('#872 nợ 4: tin MỚI, giao việc (assign), không gắn thẻ, lỗi mạng ⇒ KHÔNG bao giờ coi là rác; kết quả nhớ theo thẻ', async () => {
@@ -23,4 +23,12 @@ test('#872 nợ 4: tin MỚI, giao việc (assign), không gắn thẻ, lỗi m�
   assert.equal(done.calls.length, 1, 'nhớ theo thẻ');
   const net = mk(() => Promise.reject(new Error('HTTP 500')));
   assert.equal(await net({ kind: 'mention', task: '9#4', at: old }), null);
+});
+
+test('#872 Qa: chủ nhắn (owner_reply/decision) trên thẻ Xong KHÔNG bị bỏ; chỉ mã lỗi NOT_FOUND mới là thẻ đã xoá (404 trần/chuỗi tự do thì giữ)', async () => {
+  const c = mk(() => ({ task: { column: { name: 'Xong' } } }));
+  assert.equal(await c({ kind: 'owner_reply', task: '9#1', at: old }), null);
+  assert.equal(await c({ kind: 'decision', task: '9#1', at: old }), null);
+  const e404 = mk(() => Promise.reject(Object.assign(new Error('HTTP 404 gateway'), {})));
+  assert.equal(await e404({ kind: 'mention', task: '9#5', at: old }), null);
 });

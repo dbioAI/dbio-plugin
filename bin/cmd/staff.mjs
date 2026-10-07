@@ -188,13 +188,13 @@ const cmds = {
     const body = lines.join('\n');
     if (flags.dry) { console.log(body); return; }
     const r = await tb('comment_add', { task_id: id, body, audience: 'agent' }); // #744: hồ sơ làm việc = cho agent (tab Agent)
+    recordOutbox(WHO, r.comment_id); // ghi NGAY (tin dội về qua kênh đẩy có thể tới trước khi các bước sau xong)
     // #658.4: ghi thêm work_state có cấu trúc (server chưa có ⇒ bỏ qua, bình luận ở trên vẫn là hồ sơ)
     let ws = '';
     try {
       await tb('checkpoint', { task_id: id, work_state: { machine: hostname(), ...(g ? { worktree: g.top, branch: g.branch, base: g.base, head: g.head, pushed: g.onRemote.length > 0, dirty: g.dirty.map((l) => l.slice(3)).slice(0, 30) } : {}), ...(flags.deploy ? { deploys: [flags.deploy] } : {}), ...(flags.mig ? { migrations: [flags.mig] } : {}), ...(flags.wait ? { waiting: flags.wait } : {}), next: flags.next } });
       ws = ' · work_state ✓';
     } catch { /* server cũ */ }
-    recordOutbox(WHO, r.comment_id);
     console.log(`ok #${id} hồ sơ ${g?.head ?? '-'}${g && !g.onRemote.length ? ' (CHƯA push)' : ''}${g?.dirty.length ? ` · ${g.dirty.length} file dở` : ''} · comment ${r.comment_id}${ws}`);
   },
 
@@ -262,7 +262,7 @@ const cmds = {
     const id = r.data?.id;
     let ball = '';
     try { await ai('discuss', { task: taskRef(BOARD, id), as: WHO }); } catch (e) { ball = ` · ⚠️ chưa đặt được bóng phía chủ (${e?.message ?? e})`; } // thẻ đã ở đúng cột; discuss chỉ chốt "bóng"
-    if (spec.wakeNote) await tb('comment_add', { task_id: id, body: spec.wakeNote, mentions_staff: [spec.pm] });
+    if (spec.wakeNote) recordOutbox(WHO, (await tb('comment_add', { task_id: id, body: spec.wakeNote, mentions_staff: [spec.pm] })).comment_id);
     console.log(`ok #${id ?? '?'} góp ý ở cột Đang trao đổi · nhãn ${spec.labels.join(',')}${spec.wakeNote ? ' · đã @nhắc PM (KHẨN)' : ' · PM không bị đánh thức'}${ball}`);
   },
 
@@ -343,6 +343,7 @@ const cmds = {
     // để lại bình luận "BÁO XONG" mồ côi rồi vẫn bị từ chối). In nguyên lỗi (vd web thiếu meta.shots) để sửa --out rồi chạy lại.
     catch (e) { die(`Chưa ghi được lý do duyệt — CHƯA bình luận, CHƯA chuyển cột: ${e?.message ?? e}`); }
     const r = await tb('comment_add', { task_id: id, body, audience: 'human' }); // #744: báo xong = cho người xem
+    recordOutbox(WHO, r.comment_id);
     const cur = await columnOf(id).catch(() => null);
     let moved = dest;
     if (isApprovalColumn(cur)) { // đã ở Chờ duyệt (#664): không chuyển lại; --close vẫn thử đóng
@@ -354,7 +355,6 @@ const cmds = {
     } else await tb('task_move', { task_id: id, column_name: dest });
     recordTouch(WHO, id);
     await ai('staff_status', { who: WHO, mode: 'set', state: 'idle', note: `xong #${id}` }).catch(() => {});
-    recordOutbox(WHO, r.comment_id);
     console.log(`ok #${id} → ${moved} · ${rnote} · ${deliverables.length} sản phẩm${files.length ? ` (đã tải ${files.length} tệp lên kho)` : ""} · comment ${r.comment_id}`);
   },
 
