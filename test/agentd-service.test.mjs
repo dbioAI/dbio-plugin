@@ -15,19 +15,25 @@ test('macOS: plist launchd KeepAlive + RunAtLoad, lệnh run, thoát ký tự XM
   assert.deepEqual(p.install.at(-1).slice(0, 2), ['launchctl', 'load']);
 });
 
-test('Windows: Task Scheduler ONLOGON không cần admin (/RL LIMITED), trình khởi chạy tự chạy lại, không nhúng PATH', () => {
+test('Windows: Register-ScheduledTask -AtLogOn (schtasks ONLOGON cần admin ⇒ bị từ chối), không cần admin, trình khởi chạy tự chạy lại, không nhúng PATH', () => {
   const p = installPlan({ ...base, platform: 'win32', node: 'C:\\Program Files\\nodejs\\node.exe', script: 'D:\\p\\bin\\dbio-agentd.mjs', home: 'C:\\Users\\a', env: { PATH: 'C:\\x', DBIO_AGENTD_CONFIG: "C:\\o'hara\\c.json" } });
-  const create = p.install[0];
-  assert.deepEqual([create[0], create[1], create[3], create[5]], ['schtasks', '/Create', SERVICE_NAME, 'ONLOGON']);
-  assert.ok(create.includes('LIMITED') && create.includes('/F'));
-  assert.match(create[create.indexOf('/TR') + 1], /powershell\.exe .*-WindowStyle Hidden .*dbio-agentd-run\.ps1/);
+  const flat = JSON.stringify([p.install, p.uninstall, p.query]);
+  assert.ok(!flat.includes('schtasks'), 'không còn schtasks');
+  const reg = p.install[0];
+  assert.equal(reg[0], 'powershell.exe'); assert.ok(reg.includes('-NonInteractive'));
+  const cmd = reg.at(-1);
+  assert.match(cmd, /Register-ScheduledTask -TaskName 'dbio-agentd'/); assert.match(cmd, /New-ScheduledTaskTrigger -AtLogOn -User \$u/);
+  assert.match(cmd, /-LogonType Interactive -RunLevel Limited/); assert.match(cmd, /-ExecutionTimeLimit \(\[TimeSpan\]::Zero\)/);
+  assert.match(cmd, /-WindowStyle Hidden -File ""?[^']*dbio-agentd-run\.ps1/);
+  assert.match(p.install[1].at(-1), /Start-ScheduledTask -TaskName 'dbio-agentd'/);
+  assert.match(p.uninstall.at(-1).at(-1), /Unregister-ScheduledTask -TaskName 'dbio-agentd' -Confirm:\$false/);
+  assert.match(p.query.at(-1), /Get-ScheduledTask -TaskName 'dbio-agentd' -ErrorAction Stop/);
   const ps = p.files[0].content;
   assert.match(ps, /while \(\$true\)/); assert.match(ps, /Start-Sleep -Seconds 10/);
   assert.ok(!ps.includes('$env:PATH'));
   assert.ok(ps.includes("$env:DBIO_AGENTD_CONFIG = 'C:\\o''hara\\c.json'"), 'nháy đơn được nhân đôi (PowerShell)');
   assert.ok(ps.includes("& 'C:\\Program Files\\nodejs\\node.exe' 'D:\\p\\bin\\dbio-agentd.mjs' run"));
   assert.ok(ps.startsWith('\uFEFF'), 'BOM để PowerShell 5.1 đọc đúng tiếng Việt');
-  assert.deepEqual(p.uninstall.map((c) => c[1]), ['/End', '/Delete']);
 });
 
 test('Linux: systemd --user Restart=always, enable --now, thoát nháy đơn', () => {

@@ -172,7 +172,7 @@ test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionI
   assert.equal(isBlank({ session: 'local_blank1', sessions_dir: root }), true); assert.equal(isBlank({ session: 'local_full1', sessions_dir: root }), false);
   assert.equal(isBlank({ session: 'uuid-x' }), false); assert.equal(isBlank({}), false);
   const s = fakeSpawn();
-  const r = await getAdapter('claude-desktop').wake({ staff: 'MAC NV1', entry: { session: 'local_blank1', sessions_dir: root, args: ['--permission-mode', 'acceptEdits'] }, prompt: 'PM giao thẻ #632', spawnFn: s.fn });
+  const r = await getAdapter('claude-desktop').wake({ staff: 'MAC NV1', entry: { session: 'local_blank1', sessions_dir: root, blank_mode: 'headless', args: ['--permission-mode', 'acceptEdits'] }, prompt: 'PM giao thẻ #632', spawnFn: s.fn });
   assert.ok(r.ok && r.blank);
   assert.deepEqual(s.calls[0].args, ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits']);
   assert.ok(!s.calls[0].args.includes('--resume') && !JSON.stringify(s.calls[0].args).includes('cu-111'), 'cấm --resume priorCliSessionIds');
@@ -180,6 +180,8 @@ test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionI
   assert.match(s.calls[0].stdin, /vừa được CLEAR/); assert.match(s.calls[0].stdin, /MAC NV1/); assert.match(s.calls[0].stdin, /next --take/); assert.match(s.calls[0].stdin, /PM giao thẻ #632/);
   assert.equal((await r.running).code, 0);
   assert.equal(sessionIdFromOutput('{"type":"result","session_id":"abc-123-def","x":1}'), 'abc-123-def'); assert.equal(sessionIdFromOutput('rác'), null);
-  const t = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_prompt: 'Xin chào {name} :: {prompt}' }, prompt: '$& $1', spawnFn: s.fn });
+  const rel = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root }, prompt: 'p', spawnFn: s.fn });
+  assert.equal(rel.ok, false); assert.equal(rel.relay, true, 'mặc định: phiên trống ⇒ cần cầu (PM chốt b), không chạy ngầm');
+  const t = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_mode: 'headless', blank_prompt: 'Xin chào {name} :: {prompt}' }, prompt: '$& $1', spawnFn: s.fn });
   assert.equal(s.calls[1].stdin, 'Xin chào N :: $& $1');
 });

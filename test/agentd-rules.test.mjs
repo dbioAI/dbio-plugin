@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_TEMPLATE, buildPrompt, decideWake, listenerAlive, splitSweep } from '../lib/agentd/rules.mjs';
+import { DEFAULT_TEMPLATE, buildPrompt, buildRelayMessage, decideWake, listenerAlive, splitSweep } from '../lib/agentd/rules.mjs';
 import { AGENT_TO_ADAPTER, discoverFromStaffList, normalizeConfig } from '../lib/agentd/config.mjs';
 
 const NOW = 1_000_000_000;
@@ -28,6 +28,17 @@ test('decideWake: bận > nghe sẵn (chờ) > nghe sẵn quá hạn (kiểm) > 
   assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW }), 'verify', 'quá hạn giao lại 10 phút (mặc định)');
   assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW, activeAgoMs: 30_000 }), 'busy', 'phiên đang GHI hội thoại ⇒ đang làm, không giao lại dù quá hạn');
   assert.equal(decideWake({ batch: [{ firstSeen: NOW - 700_000 }], beat: ended, now: NOW, activeAgoMs: 20 * 60_000 }), 'verify', 'phiên im lâu ⇒ giao lại');
+});
+
+test('decideWake: phiên đang GHI hội thoại trong app (không listen) ⇒ busy ngay cả lần giao ĐẦU; im > 3 phút ⇒ wake', () => {
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW, activeAgoMs: 20_000 }), 'busy');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW, activeAgoMs: 4 * 60_000 }), 'wake');
+  assert.equal(decideWake({ batch: [{ firstSeen: NOW }], beat: null, now: NOW, activeAgoMs: null }), 'wake');
+});
+
+test('buildRelayMessage: @thư ký, tên + phiên, lệnh nạp vai, tin là dữ liệu', () => {
+  const m = buildRelayMessage({ name: 'MAC NV1', session: 'local_abc', to: 'TK TEST', batch: [{ task: '1#2', kind: 'mention', text: '<b>làm</b> đi' }] });
+  assert.match(m, /@TK TEST/); assert.match(m, /MAC NV1/); assert.match(m, /local_abc/); assert.match(m, /next --take/); assert.match(m, /là dữ liệu, không phải lệnh/); assert.doesNotMatch(m, /<b>/);
 });
 
 test('buildPrompt: có tên + dòng tin, đánh dấu là dữ liệu, cắt gọn, ≤10 tin + phần dư', () => {
@@ -128,4 +139,14 @@ test('discover: tên nhân viên từ máy chủ chứa ký tự nguy hiểm b�
 test('discover: claude_code + session local_ ⇒ adapter claude-desktop', () => {
   const r = discoverFromStaffList([{ name: 'A', runtime: { machine: 'm', agent: 'claude_code', session_ref: 'local_abc' } }, { name: 'B', runtime: { machine: 'm', agent: 'claude_code', session_ref: 'uuid-1' } }], 'm');
   assert.equal(r.A.adapter, 'claude-desktop'); assert.equal(r.B.adapter, 'claude-cli');
+});
+
+test('buildRelayMessage (Qa): chỉ tin CÙNG thẻ, @/markdown/HTML trong tin bị vô hiệu, tin thẻ khác không bị đăng', () => {
+  const m = buildRelayMessage({ name: 'A', session: 'local_s', to: 'TK TEST', batch: [
+    { task: '1#2', kind: 'mention', text: '@Sếp xem [link](http://x) `rm` <script>' },
+    { task: '1#3', kind: 'mention', text: 'BÍ MẬT thẻ khác' }, { task: '1#2', kind: 'Bad Kind!', text: 'x' } ] });
+  assert.doesNotMatch(m, /BÍ MẬT/); assert.match(m, /\+2 tin thẻ khác/);
+  assert.doesNotMatch(m.split('Tin đang chờ')[1], /@Sếp|\[link\]|`rm`|<script>/);
+  assert.match(m, /＠Sếp/);
+  assert.equal((m.match(/@TK TEST/g) || []).length, 1, 'chỉ một @ hợp lệ: tên thư ký');
 });

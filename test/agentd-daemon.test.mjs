@@ -173,27 +173,82 @@ test('adapter chạy hỏng NGAY (lệnh không có / thoát mã 1): tin KHÔNG 
   } finally { d.stop(); await srv.stop(); }
 });
 
-test('phiên TRỐNG (vừa clear) + listen cũ vừa nuốt tin (beat ended, chưa ack): daemon thức NGAY < 10s, không chờ hạn giao lại', async () => {
+test('phiên TRỐNG (vừa clear): daemon KHÔNG chạy claude -p mà gửi CẦU @thư ký lên thẻ của tin (<10s), chưa ack, không cầu lặp trong hạn', async () => {
   const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
-  const name = uniq(); const woken = [];
-  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 10 } });
+  const name = uniq(); const woken = []; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 10, relay_to: 'TK TEST' } });
   let blank = true;
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }) }),
+    makeClient: () => ({
+      ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }),
+      call: async (tool, a) => { posted.push({ tool, ...a }); return {}; },
+    }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => blank, wake: async (ctx) => { woken.push({ at: Date.now(), prompt: ctx.prompt }); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
   const keyBeat = keyFile(name).replace(/\.json$/, '.alive.json');
   try {
-    recordBeat(name, { mode: 'listen', every: 60_000 }); endBeat(name); // listen vừa thoát (đã in tin, chưa ack)
+    recordBeat(name, { mode: 'listen', every: 60_000 }); endBeat(name); // listen cũ vừa thoát (đã in tin, chưa ack)
     await d.start(); await waitFor(() => srv.conns.length === 1);
-    const t0 = Date.now(); srv.conns[0].send(evt(1, { text: '@MAC NV1 làm thẻ' }));
-    await waitFor(() => woken.length === 1, 10_000);
-    assert.ok(woken[0].at - t0 < 10_000); assert.match(woken[0].prompt, /làm thẻ/);
-    // phiên KHÔNG trống (đang xử lý) + listen vừa thoát ⇒ đợi hạn giao lại (10 phút) ⇒ chưa thức
-    blank = false; d.st.get(name).probeAt = 0; srv.conns[0].send(evt(2, { text: 'tin kế' }));
+    const t0 = Date.now(); srv.conns[0].send(evt(1, { task: '1234#9', text: '@MAC NV1 làm thẻ' }));
+    await waitFor(() => posted.length === 1, 10_000);
+    assert.ok(Date.now() - t0 < 10_000);
+    assert.equal(woken.length, 0, 'KHÔNG chạy phiên ẩn');
+    const p = posted[0];
+    assert.deepEqual([p.tool, p.action, p.profile_id, p.task_id, p.as], ['task_board', 'comment_add', 1234, 9, name]);
+    assert.match(p.body, /@TK TEST/); assert.match(p.body, /CẦU KHẨN/); assert.match(p.body, /local_x/); assert.match(p.body, /next --take/); assert.match(p.body, /làm thẻ/);
     await new Promise((r) => setTimeout(r, 400));
-    assert.equal(woken.length, 1);
+    assert.equal(posted.length, 1, 'không cầu lặp trong hạn giao lại');
+    assert.ok(!srv.conns[0].received.some((f) => f.op === 'ack'), 'chưa ack: phiên thức sẽ tự nhận qua listen');
+    assert.equal(d.st.get(name).relays, 1);
   } finally { d.stop(); try { unlinkSync(keyBeat); } catch { /* chưa có */ } await srv.stop(); }
+});
+
+test('blank_mode: "headless" (opt-in) ⇒ vẫn gọi adapter (phiên ẩn), không cầu', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x', blank_mode: 'headless' } }, defaults: { coalesce_ms: 0 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try { await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1)); await waitFor(() => woken.length === 1, 8000); assert.equal(posted.length, 0); } finally { d.stop(); await srv.stop(); }
+});
+
+test('agentd lần ĐẦU nối: fresh (bỏ tin cũ) theo mặc định; first_run: "backlog" ⇒ nhận tin cũ', async () => {
+  const seen = [];
+  const mk = (first_run) => {
+    const { config } = normalizeConfig({ staff: { T: { adapter: 'command', command: ['x'] } }, defaults: first_run ? { first_run } : {} });
+    return createDaemon({ loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, stream: (o) => { seen.push(o.fresh); return { done: new Promise(() => {}), state: {}, queue: [], stop() {} }; } });
+  };
+  const a = mk(null); await a.start(); a.stop(); const b = mk('backlog'); await b.start(); b.stop();
+  assert.deepEqual(seen, [true, false]);
+});
+
+
+test('cầu cho phiên trống: trần 3 lần / thẻ (sổ trên đĩa), không lặp sau khi daemon khởi động lại', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 0, relay_to: 'TK TEST', max_relays: 2, retry_s: 0 } });
+  const mkd = () => createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (t, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { posted.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, wake: async () => ({ ok: true }) }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  const d = mkd();
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '5#7' }));
+    await waitFor(() => posted.length >= 2, 6000);
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(posted.length, 2, 'dừng ở trần 2');
+    assert.match(d.st.get(name).lastError ?? '', /cần người xử lý/);
+    d.stop();
+    const d2 = mkd(); await d2.start(); await new Promise((r) => setTimeout(r, 600));
+    assert.equal(posted.length, 2, 'khởi động lại vẫn nhớ sổ cầu'); d2.stop();
+  } finally { d.stop(); await srv.stop(); }
 });

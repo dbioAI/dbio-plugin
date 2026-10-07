@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.2.1** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.2.2** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -26,7 +26,7 @@ Máy chủ có kênh sự kiện `staff:` (WebSocket, SSE dự phòng): giao th�
 ```
 npm i -g https://github.com/dbioAI/dbio-plugin/archive/refs/heads/main.tar.gz
 ```
-Máy KHÔNG cần git/SSH. Đừng dùng `npm i -g github:dbioAI/dbio-plugin`: npm gọi `ssh://git@github.com`, lỗi trên máy không có khoá SSH GitHub. Bản cố định theo thẻ khi có release: `…/archive/refs/tags/v0.2.1.tar.gz`.
+Máy KHÔNG cần git/SSH. Đừng dùng `npm i -g github:dbioAI/dbio-plugin`: npm gọi `ssh://git@github.com`, lỗi trên máy không có khoá SSH GitHub. Bản cố định theo thẻ khi có release: `…/archive/refs/tags/v0.2.2.tar.gz`.
 ⇒ có `dbio-staff` và `dbio-agentd` (cần khoá nhân viên: `dbio-staff login --as "<tên>"`).
 
 ### 1. Phiên đang làm việc: `dbio-staff listen --as "<tên>"`
@@ -82,8 +82,11 @@ An toàn: lời nhắc đi qua **stdin** (không bao giờ trên dòng lệnh); 
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
 
 ### Phiên vừa CLEAR (#872) và chống mất tin
-- **Phiên trống:** sau khi chủ clear, tệp `local_….json` của phiên còn nhưng mất `cliSessionId` (nằm ở `priorCliSessionIds`). Adapter `claude-desktop` coi đó là phiên TRỐNG: chạy `claude -p` **phiên mới** trong `cwd` của tệp (không `--resume`, không bao giờ dùng `priorCliSessionIds`), lời nhắc nạp lại vai + `staff next --take`; log ghi cliSessionId mới. Daemon thức NGAY (bỏ qua chờ `listen`). Chạy ngầm thì **không hỏi quyền** được ⇒ khai `args` cho phù hợp (vd `["--permission-mode","acceptEdits"]`).
-- **Đo 7/10 (Windows):** (a) `claude -p` phiên mới: ~44k token ngữ cảnh, ~4s, trả lời được lên thẻ, nhưng **app KHÔNG hiện phiên đó** (list_sessions không có; phiên ghim vẫn trống). (b) chuyển tin vào phiên ghim trống qua `send_message` của một phiên khác: phiên thức ngay, trả lời ~3s, **hiện ngay trong app** với cliSessionId mới, ~81k token ngữ cảnh — nhưng chỉ làm được từ trong một phiên app (daemon không gọi được).
+- **Phiên trống (PM chốt 7/10: phương án b):** sau khi chủ clear, tệp `local_….json` còn nhưng mất `cliSessionId` (nằm ở `priorCliSessionIds`) ⇒ phiên TRỐNG. Phiên ghim phải HIỆN trong app (chủ xem/can thiệp, danh tính = tên phiên) nên daemon **không** chạy `claude -p` ẩn: nó ghi một lời **CẦU KHẨN** (kèm `@<tên thư ký>` — khai `defaults.relay_to` trong `agentd.json`, hoặc `secretaries[0]` trong `~/.dbio/watch.json`) lên thẻ của tin; thư ký (phiên app, canh sẵn) `send_message` vào đúng phiên ghim: "nạp vai + `staff next --take`". Tin chưa ack ⇒ phiên thức tự nhận qua `listen` rồi ack; không thức thì sau `redeliver_after_min` daemon kiểm lại và cầu tiếp. Không bao giờ `--resume priorCliSessionIds`. Opt-in cũ: `blank_mode: "headless"` trên mục nhân viên ⇒ chạy `claude -p` phiên mới ẩn (app không hiện); khi đó khai `args` (vd `["--permission-mode","acceptEdits"]`).
+- **Đo 7/10 (Windows) — lý do chọn (b):** (a) `claude -p` phiên mới: ~44k token ngữ cảnh, ~4s, trả lời được lên thẻ, nhưng **app KHÔNG hiện phiên đó** (list_sessions không có; phiên ghim vẫn trống). (b) chuyển tin vào phiên ghim trống qua `send_message` của một phiên khác: phiên thức ngay, trả lời ~3s, **hiện ngay trong app** với cliSessionId mới, ~81k token ngữ cảnh — nhưng chỉ làm được từ trong một phiên app (daemon không gọi được).
+- **Lần đầu nối:** daemon mặc định `fresh` (bỏ hàng đợi tin cũ, không thức cả loạt phiên vì tin tuần trước); muốn nhận tồn đọng: `defaults.first_run: "backlog"`.
+- **Phiên đang chạy trong app (không `listen`):** tệp hội thoại vừa được ghi < 3 phút ⇒ daemon KHÔNG thức (tránh 2 tiến trình ghi một hội thoại), chờ phiên yên.
+- **Windows:** thư mục phiên lấy theo `lib/sessions-dir.mjs` (đường dẫn thật trong gói MSIX — tiến trình Task Scheduler ngoài gói không thấy `%APPDATA%` ảo); `dbio-agentd install` dùng `Register-ScheduledTask -AtLogOn` (không cần admin; `schtasks /SC ONLOGON` bị từ chối).
 - **Chống mất tin:** `listen` không còn ack ngay khi giao tin (phiên có thể vừa bị clear/chết). Id tin ghi vào `~/.dbio/stream/<tên>.listen.pending.json`; lần chạy lại `listen` kế tiếp (= phiên đã xử lý xong) mới ack. Chưa ack ⇒ máy chủ vẫn báo chưa đọc ⇒ daemon giao lại sau `redeliver_after_min` (mặc định 3 phút), trừ khi phiên trống (thức ngay).
 
 ## Biến môi trường

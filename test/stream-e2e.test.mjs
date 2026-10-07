@@ -168,3 +168,11 @@ test('deliver chậm: không chạy chồng 2 lượt lên cùng một lô (tick
   s.done.catch(() => {});
   try { await waitFor(() => s.queue.length === 0 && calls >= 1, 3000); await new Promise((r) => setTimeout(r, 200)); assert.equal(maxActive, 1); assert.equal(calls, 1); } finally { s.stop(); await srv.stop(); }
 });
+
+test('fresh lần đầu: bỏ tin chưa đọc CŨ nhưng giữ tin còn mới (freshKeepMs); nối lại không xử lý lại', async () => {
+  const old = new Date(Date.now() - 48 * 3_600_000).toISOString(); const young = new Date(Date.now() - 600_000).toISOString();
+  let round = 0;
+  const srv = await startFakeServer({ onConnect: (c) => { round++; c.send(hello(100)); if (round === 1) { c.send(evt(50, { at: old })); c.send(evt(60, { at: young })); c.send({ type: 'caught_up', v: 1, cursor: 100, more: false }); setTimeout(() => c.close(1011), 200); } else { c.send(evt(60, { at: young })); } } });
+  const { s, delivered } = open(srv, uniq(), { fresh: true, freshKeepMs: 6 * 3_600_000 });
+  try { await waitFor(() => delivered.length >= 1, 4000); await new Promise((r) => setTimeout(r, 1800)); assert.deepEqual(delivered.map((d) => d.id), [60]); } finally { s.stop(); await srv.stop(); }
+});
