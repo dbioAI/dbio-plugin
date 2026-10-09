@@ -131,8 +131,8 @@ test('phiên TRỐNG mà còn cầm thẻ ⇒ cầu NẠP VAI (1 lần / giờ /
   await d.load();
   await d.hygiene(); assert.equal(posted.length, 1); assert.match(posted[0].body, /CẦU NẠP VAI/); assert.match(posted[0].body, /takeover 77/); assert.match(posted[0].body, new RegExp(name));
   await d.hygiene(); assert.equal(posted.length, 1, 'chưa tới 1 giờ');
-  tick(61 * 60_000); await d.hygiene(); assert.equal(posted.length, 2);
-  held = false; tick(61 * 60_000); await d.hygiene(); assert.equal(posted.length, 2, 'không còn thẻ ⇒ để trống');
+  tick(61 * 60_000); await d.hygiene(); assert.equal(posted.length, 3, 'dự phòng PM + cầu lại');
+  held = false; tick(61 * 60_000); await d.hygiene(); assert.equal(posted.length, 3, 'không còn thẻ ⇒ để trống');
 });
 
 test('hygiene tắt (rules.hygiene.enabled:false) hoặc nhân viên là thư ký ⇒ không làm gì', async () => {
@@ -182,4 +182,13 @@ test('phiên TRỐNG đang cầm thẻ #77: tin trên thẻ đó ⇒ cầu; cầ
     await waitFor(() => posted.length === 1, 8000);
     tick(30 * 60_000); await new Promise((r) => setTimeout(r, 500)); assert.equal(posted.length, 1, 'chưa đủ 60 phút ⇒ không cầu lại');
   } finally { d.stop(); await srv.stop(); }
+});
+
+test('(v0.3.2) cầu NẠP VAI mà phiên vẫn trống sau 5\' ⇒ dự phòng báo PM đúng 1 lần', async () => {
+  const { d, posted, tick } = mk({ tasks: (who) => [{ id: 77, column_id: 1, labels: JSON.stringify([`@${who}`]) }], adapter: { isBlank: () => true, activeAgoMs: () => null, overLimit: () => ({ blocked: false }) } });
+  await d.load();
+  await d.hygiene(); assert.equal(posted.length, 1);
+  tick(3 * 60_000); await d.hygiene(); assert.equal(posted.length, 1, 'chưa tới 5 phút');
+  tick(3 * 60_000); await d.hygiene(); assert.equal(posted.length, 2); assert.match(posted[1].body, /DỰ PHÒNG/); assert.match(posted[1].body, /takeover 77/);
+  tick(3 * 60_000); await d.hygiene(); assert.equal(posted.length, 2, 'chỉ báo 1 lần');
 });

@@ -244,3 +244,14 @@ test('#872 Qa: self-ref chỉ áp cho tin loại bình luận/@nhắc — assign
   const r = f([it({ kind: 'assign', ref_id: 777 }), it({ kind: 'decision', ref_id: 777, task: '1001#701' })], { outbox: { 777: Date.now() } });
   assert.equal(r.drop.length, 0);
 });
+
+// #965 v0.3.2: lời cầu của agentd gửi thư ký luôn khẩn, không bị lọc nhiễu
+test('(#965) CẦU NẠP VAI / DỌN PHIÊN / KHẨN của agentd ⇒ khẩn, qua mọi bộ lọc nhiễu', () => {
+  for (const head of ['CẦU NẠP VAI', 'CẦU DỌN PHIÊN', 'CẦU KHẨN']) {
+    const text = `🔔 ${head} (dbio-agentd) @THƯ KÝ: phiên ghim của NV vừa được dọn. Góp ý: x`;
+    assert.equal(classify(it({ kind: 'mention', text })), 'urgent');
+    const r = f([it({ kind: 'mention', task: '1001#931', text }), it({ kind: 'mention', task: '1001#931', text })], { secretary: true, columns: { 931: 'Cần anh xử lý' } });
+    assert.equal(r.keep.length, 2); assert.ok(r.keep.every((k) => k.cls === 'urgent'));
+  }
+  assert.equal(classify(it({ kind: 'mention', text: 'ghi chú thường' })), 'normal');
+});
