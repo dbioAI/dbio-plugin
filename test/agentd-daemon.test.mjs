@@ -281,7 +281,7 @@ test('agentd lần ĐẦU nối: fresh (bỏ tin cũ) theo mặc định; first_
 test('cầu cho phiên trống: trần 3 lần / thẻ (sổ trên đĩa), không lặp sau khi daemon khởi động lại', async () => {
   const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
   const name = uniq(); const posted = [];
-  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 0, relay_to: 'TK TEST', max_relays: 2, retry_s: 0 } });
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 0, relay_card_min: 0, relay_to: 'TK TEST', max_relays: 2, retry_s: 0 } });
   const mkd = () => createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
     makeClient: () => ({ ai: async (t, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { posted.push(a); return {}; } }),

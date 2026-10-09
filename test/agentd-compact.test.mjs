@@ -158,3 +158,28 @@ test('adapter claude-desktop.overLimit đọc tệp phiên + hội thoại thậ
   assert.equal(desk.overLimit(e('local_big', { allow_large: true })).blocked, false);
   assert.equal(desk.overLimit(e('local_missing')).blocked, false);
 });
+
+/* ---------- #965 (PM 09:15/09:26): hết CẦU LẶP vô ích cho phiên trống không cầm thẻ ---------- */
+test('phiên TRỐNG không cầm thẻ liên quan: tin @nhắc cũ ⇒ ACK, KHÔNG cầu; tin giao việc (assign) vẫn cầu', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const { d, posted } = mk({ srv, tasks: [], adapter: { isBlank: () => true, activeAgoMs: () => null, overLimit: () => ({ blocked: false }) } });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#9', kind: 'mention', text: 'nhắc cũ đã xử lý' }));
+    await waitFor(() => srv.conns[0].received.some((f) => f.op === 'ack' && f.ids.includes(1)), 8000);
+    assert.equal(posted.length, 0, 'không cầm thẻ ⇒ không đánh thức PM/thư ký');
+    srv.conns[0].send(evt(2, { task: '1234#10', kind: 'assign', text: 'việc mới' }));
+    await waitFor(() => posted.length === 1, 8000); assert.match(posted[0].body, /CẦU KHẨN/);
+  } finally { d.stop(); await srv.stop(); }
+});
+
+test('phiên TRỐNG đang cầm thẻ #77: tin trên thẻ đó ⇒ cầu; cầu cùng (nhân viên, thẻ) tối đa 1 lần / relay_card_min', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const { d, posted, tick } = mk({ srv, defaults: { redeliver_after_min: 1 }, adapter: { isBlank: () => true, activeAgoMs: () => null, overLimit: () => ({ blocked: false }) } });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '1234#77', kind: 'mention', text: 'thẻ đang cầm' }));
+    await waitFor(() => posted.length === 1, 8000);
+    tick(30 * 60_000); await new Promise((r) => setTimeout(r, 500)); assert.equal(posted.length, 1, 'chưa đủ 60 phút ⇒ không cầu lại');
+  } finally { d.stop(); await srv.stop(); }
+});
