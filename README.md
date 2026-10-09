@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.2.2** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.3.0** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -74,6 +74,17 @@ Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi ch�
 | `command` | lệnh tuỳ chỉnh (mảng, không qua shell của bạn), lời nhắc ở stdin + `DBIO_WAKE_*` | `command: ["node","x.mjs"]` |
 
 An toàn: lời nhắc đi qua **stdin** (không bao giờ trên dòng lệnh); mọi tham số phải khớp ký tự an toàn; khoá chỉ ở header `Authorization` (không lên URL, không vào log/trạng thái); nội dung tin chỉ là dữ liệu. Log mỗi nhân viên: `~/.dbio/agentd-logs/<tên>.log`.
+
+### Tự dọn phiên quá ngưỡng (#965, v0.3.0) — chủ không phải clear tay
+
+Phiên Desktop vượt `max_context_tokens` (mặc định 100k; khuyến nghị 250000 trong từng mục `agentd.json`) **không đứng chờ người**:
+
+1. **Có tin tới / hoặc phiên rảnh ≥ `rules.hygiene.idle_min` (15') mà đang cầm thẻ** ⇒ daemon ghi lời **CẦU DỌN PHIÊN** (@`defaults.relay_to`, thường THƯ KÝ NHẮC VIỆC) lên thẻ, kèm **lệnh cố định**: *checkpoint thẻ → dừng tác vụ nền → `set_remote_control {session_id:"self", enabled:false}` → `clear_session {session_id:"self"}`*. Thư ký `send_message` NGUYÊN VĂN vào phiên ghim (1 lượt cache nguội, chấp nhận).
+   - Vì sao qua thư ký chứ không `claude --resume -p`: lượt thức ngầm **không có** `clear_session`/`set_remote_control` (công cụ của ứng dụng; đo 9/10) — chỉ phiên trong ứng dụng mới tự clear được.
+2. Chưa clear ⇒ thử lại cách `defaults.compact_retry_min` (15'), tối đa `compact_max_tries` (3); hết lượt ⇒ bình luận 🛑 @trưởng nhóm (1 lần / giờ).
+3. Phiên **trống** (tệp phiên mất `cliSessionId`) ⇒ sổ dọn reset: có tin ⇒ **CẦU KHẨN** nạp vai (đường phiên trống sẵn có); không tin nhưng **còn cầm thẻ** ⇒ **CẦU NẠP VAI** (`whoami` → luật phòng → `takeover <thẻ>`), ≤ 1 lần / thẻ / giờ. Không cầm thẻ ⇒ để trống (có việc thì đánh thức).
+Tắt: `defaults.auto_compact: false` hoặc từng mục `"auto_compact": false`; `rules.hygiene.enabled: false`. `allow_large: true` / `blank_mode: "headless"` / `secretary: true` không bị dọn. Log: `~/.dbio/agentd-logs/<tên>.wake.log` (CẦU DỌN · CẦU NẠP VAI · DỌN PHIÊN xong). Áp cả Windows và Mac (cùng mã).
+**Điều kiện ủy quyền:** phiên ghim chỉ làm theo lệnh clear nếu CLAUDE.md của dự án cho phép nguồn lệnh này (hiện CLAUDE.md chỉ nêu phiên "PM giao việc").
 
 ### Phiên Desktop (kết quả thử 7/10)
 `claude --resume` trên phiên Claude Desktop (qua `cliSessionId` trong `…/Claude/claude-code-sessions/**/local_*.json`) **chạy được**: thoát 0, trả lời, ghi nối vào đúng tệp hội thoại của phiên. Lưu ý: (1) phiên nghỉ lâu bị **nguội bộ nhớ đệm** ⇒ lượt đầu tính lại toàn bộ ngữ cảnh (một phiên ~470k token tốn ~4,7 USD trên Opus) — vì thế adapter **chặn mặc định phiên > 100k token** (`max_context_tokens` đổi ngưỡng, `allow_large: true` bỏ chặn); phiên lớn thì chờ `listen` hoặc thư ký; (2) đừng thức phiên đang chạy dở trong ứng dụng (hai tiến trình cùng ghi một hội thoại); (3) việc app hiện tin mới ngay hay chỉ sau khi mở lại phiên chưa kiểm được bằng mã.
