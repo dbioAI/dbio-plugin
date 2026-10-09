@@ -85,7 +85,7 @@ import { runSweep } from '../../lib/secretary-io.mjs';
 import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
-const VALUE_FLAGS = ['--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
+const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
   '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce'];
 const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out']);
 const [cmd, ...rest] = pos;

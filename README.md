@@ -89,6 +89,18 @@ Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (
 - **Windows:** thư mục phiên lấy theo `lib/sessions-dir.mjs` (đường dẫn thật trong gói MSIX — tiến trình Task Scheduler ngoài gói không thấy `%APPDATA%` ảo); `dbio-agentd install` dùng `Register-ScheduledTask -AtLogOn` (không cần admin; `schtasks /SC ONLOGON` bị từ chối).
 - **Chống mất tin:** `listen` không còn ack ngay khi giao tin (phiên có thể vừa bị clear/chết). Id tin ghi vào `~/.dbio/stream/<tên>.listen.pending.json`; lần chạy lại `listen` kế tiếp (= phiên đã xử lý xong) mới ack. Chưa ack ⇒ máy chủ vẫn báo chưa đọc ⇒ daemon giao lại sau `redeliver_after_min` (mặc định 3 phút), trừ khi phiên trống (thức ngay).
 
+### Nhiều máy · nhiều phòng · nhiều store (#965)
+
+- **Dịch vụ không giữ bí mật**: `dbio-agentd install` KHÔNG chép `CLAUDE_CODE_OAUTH_TOKEN`/khoá API vào plist · tác vụ Windows · unit systemd (chỉ `PATH` + `DBIO_AGENTD_CONFIG`). Token hết hạn không còn làm chết cả máy; phiên con dùng đăng nhập Claude sẵn có của người dùng. Máy cũ đã lỡ có token trong plist: `dbio-agentd install` lại để ghi đè.
+- **Quyền công cụ cho lượt thức ngầm**: trong `agentd.json`, `"allowed_tools": ["Bash(dbio-staff:*)", "Read"]` (hoặc chuỗi `"a,b"`) ⇒ adapter claude-cli/claude-desktop thêm `--allowedTools`. Ký tự `( ) * :` đi được; dấu nháy kép, `% ^ & | < > ; $` bị chặn. Không dùng `args` cho việc này (`args` chỉ nhận ký tự an toàn).
+- **Log mỗi lượt thức**: `~/.dbio/agentd-logs/<tên>.wake.log` — mỗi lượt một dòng (`THỨC xong mã=… Ns` · `THỨC thất bại — …` · `HOÃN n tin — lý do (đã Mp)`). Đầu ra phiên con vẫn ở `<tên>.log`.
+- **Sổ cái theo khoá**: `board` trong tệp khoá ưu tiên hơn biến `DBIO_BOARD` (shim máy dev đặt mặc định 162801 nên trước đây đè khoá ⇒ nhân viên phòng khác ghi nhầm sổ). Thứ tự: `--board` › `board` của khoá › `DBIO_BOARD` › máy chủ.
+- **Cấp khoá đa phòng/đa store** (admin, repo dbio-internal):
+  ```
+  dbio hr key "<tên>" --store <store> --platform <p> --board <sổ cái phòng>
+  ```
+  Store ≠ 2 ⇒ lưu `~/.dbio/staff-keys/<tên>@s<store>.json` (không ghi đè khoá store nhà); dùng bằng `dbio-staff --as "<tên>" --store <store> …`. `--board` ghi trường `board` vào khoá (vd Marketing: 165501). Ví dụ cấp khoá store 4 cho nhân viên Marketing đọc CRM/Mimi: `--store 4 --platform 4 --board 165501`.
+
 ## Biến môi trường
 
 | Biến | Ý nghĩa |

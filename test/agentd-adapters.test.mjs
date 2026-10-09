@@ -203,3 +203,50 @@ test('#872 nợ 6: activeAgoMs lấy MIN(tệp hội thoại, lastActivityAt c�
   const ms = getAdapter('claude-desktop').activeAgoMs({ session: 'local_act6', sessions_dir: root, projects_dir: proj });
   assert.ok(ms != null && ms < 20_000, `ms=${ms}`);
 });
+
+// ===== #965: allowed_tools =====
+import { allowedToolsArgs, UNSAFE_TOOLARG } from '../lib/agentd/adapters/util.mjs';
+import { boardOf } from '../lib/common.mjs';
+import { installPlan } from '../lib/agentd/service.mjs';
+
+test('#965 allowed_tools: mảng/chuỗi ⇒ một cặp --allowedTools; ngoặc/sao/hai chấm đi được, ký tự shell bị chặn', () => {
+  assert.deepEqual(allowedToolsArgs(['Bash(dbio-staff:*)', 'Read']), ['--allowedTools', 'Bash(dbio-staff:*),Read']);
+  assert.deepEqual(allowedToolsArgs('Bash(dbio-staff:*),Read'), ['--allowedTools', 'Bash(dbio-staff:*),Read']);
+  assert.deepEqual(allowedToolsArgs(undefined), []);
+  for (const bad of ['Bash(x;rm)', 'Bash(a|b)', 'Bash($(x))', '-p', 'Bash(x) y']) assert.throws(() => allowedToolsArgs([bad]), /allowed_tools/, bad);
+  assert.ok(UNSAFE_TOOLARG.test('a"b') && UNSAFE_TOOLARG.test('a&b'));
+});
+
+test('#965 allowed_tools: runChild truyền nguyên cặp sau args (không qua SAFE_ARG)', () => {
+  let seen;
+  const fake = (exe, args) => { seen = args; return { pid: 1, stdout: { on() {} }, stderr: { on() {} }, stdin: { on() {}, end() {} }, on() {} }; };
+  const r = runChild({ bin: 'claude', args: ['-p'], toolArgs: allowedToolsArgs(['Bash(dbio-staff:*)']), spawnFn: fake, logName: 't965' });
+  assert.ok(r.ok);
+  assert.equal(seen[0], '-p'); assert.equal(seen[1], '--allowedTools'); assert.ok(seen[2].includes('Bash(dbio-staff:*)'));
+  assert.equal(runChild({ bin: 'claude', toolArgs: ['--allowedTools', 'a"b'], spawnFn: fake }).ok, false);
+});
+
+test('#965 plist/launcher/unit KHÔNG chép token hay khoá vào env dịch vụ', () => {
+  const env = { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 'sk-x', ANTHROPIC_API_KEY: 'k', DBIO_AGENTD_CONFIG: '/c.json' };
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const p = installPlan({ platform, node: '/n', script: '/s', home: '/h', env });
+    const all = p.files.map((f) => f.content).join('\n');
+    assert.ok(!/sk-x|OAUTH|ANTHROPIC/.test(all), platform);
+  }
+});
+
+test('#965 sổ cái: khoá.board ưu tiên hơn DBIO_BOARD mặc định máy, --board ưu tiên nhất', () => {
+  assert.equal(boardOf({}, { board: 165501 }, { DBIO_BOARD: '162801' }), 165501);
+  assert.equal(boardOf({ board: 7 }, { board: 165501 }, { DBIO_BOARD: '162801' }), 7);
+  assert.equal(boardOf({}, {}, { DBIO_BOARD: '162801' }), 162801);
+  assert.equal(boardOf({}, null, {}), null);
+});
+
+test('#965 keyFile: store số ⇒ <tên>@s<store>.json (không ghi đè khoá store nhà); không store ⇒ tên trần', async () => {
+  const { keyFile } = await import('../lib/common.mjs');
+  assert.match(keyFile('Mimi'), /Mimi\.json$/);
+  assert.match(keyFile('Mimi', 4), /Mimi@s4\.json$/);
+  assert.match(keyFile('Mimi', '4'), /Mimi@s4\.json$/);
+  assert.match(keyFile('Mimi', null), /Mimi\.json$/);
+  assert.match(keyFile('Mimi', 'x/../y'), /Mimi\.json$/);
+});
