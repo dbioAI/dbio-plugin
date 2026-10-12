@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.3.2** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.3.3** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -94,6 +94,15 @@ Tắt: `defaults.auto_compact: false` hoặc từng mục `"auto_compact": false
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
 
 ### Phiên vừa CLEAR (#872) và chống mất tin
+
+**v0.3.3 (#1022, chủ chốt 12/10) — agentd TỰ đưa việc tới nhân viên, không qua PM/thư ký.** Adapter `claude-desktop`, mặc định `blank_mode: "spawn"`:
+1. Phiên ghim **có ngữ cảnh** ⇒ `claude --resume` như cũ.
+2. Nhắn thẳng vào phiên ghim **vừa clear**: ứng dụng **không cho** từ ngoài (đo 12/10: clear ⇒ tiến trình CLI của phiên thoát, không còn kênh nhắn `cc-msg`; kênh đó xác thực bằng token chỉ có trong tiến trình; deep link `claude://` không có lệnh gửi tin) ⇒ bỏ qua nhánh này.
+3. Phiên ghim **trống / tệp phiên mất** (xoá, đổi tài khoản, đổi id) / **quá ngưỡng** ⇒ daemon **TỰ TẠO phiên CLI mới** trong `cwd`: `--name <tên NV>`, `--model` theo `roles.json` (`roles_file` | `DBIO_ROLES_FILE` | `$DBIO_ROOT/…/playbooks/roles.json`; `model` trên mục thắng), `args` của mục (vd bypass), lời nhắc mở đầu `/staff <slug> <sổ>#<thẻ>`. Id phiên mới lưu ở `~/.dbio/stream/<tên>.agentd.spawn.json` theo THẺ ⇒ tin sau **cùng thẻ** `--resume` đúng phiên đó (giữ ngữ cảnh); **thẻ khác** ⇒ phiên mới (khớp luật "xong thẻ ⇒ clear"). Phiên tự tạo đang ghi hội thoại (< 3') ⇒ chờ, không chạy song song. Phiên ghim quá ngưỡng thì để yên (rảnh = 0 token) — không còn CẦU DỌN. Hygiene: phiên ghim trống mà NV còn thẻ **Đang làm** ⇒ tự tạo/--resume phiên tiếp quản (≤ 1 lần/thẻ/`reload_every_min`).
+4. Tự tạo phiên **hỏng ≥ `max_relays` (3) lần liên tiếp** ⇒ mới ghi CẦU KHẨN @`relay_to`.
+Phiên tự tạo chạy ngầm: app **không hiện** nó (transcript ở `~/.claude/projects/<dự án>/<id>.jsonl`; xem trong app: `claude://resume?session=<id>`). Hành vi cũ (cầu thư ký): `blank_mode: "relay"`; `"headless"` = bí danh cũ của `"spawn"`.
+
+Phần dưới là lịch sử trước v0.3.3:
 - **Phiên trống (PM chốt 7/10: phương án b):** sau khi chủ clear, tệp `local_….json` còn nhưng mất `cliSessionId` (nằm ở `priorCliSessionIds`) ⇒ phiên TRỐNG. Phiên ghim phải HIỆN trong app (chủ xem/can thiệp, danh tính = tên phiên) nên daemon **không** chạy `claude -p` ẩn: nó ghi một lời **CẦU KHẨN** (kèm `@<tên thư ký>` — khai `defaults.relay_to` trong `agentd.json`, hoặc `secretaries[0]` trong `~/.dbio/watch.json`) lên thẻ của tin; thư ký (phiên app, canh sẵn) `send_message` vào đúng phiên ghim: "nạp vai + `staff next --take`". Tin chưa ack ⇒ phiên thức tự nhận qua `listen` rồi ack; không thức thì sau `redeliver_after_min` daemon kiểm lại và cầu tiếp. Không bao giờ `--resume priorCliSessionIds`. Opt-in cũ: `blank_mode: "headless"` trên mục nhân viên ⇒ chạy `claude -p` phiên mới ẩn (app không hiện); khi đó khai `args` (vd `["--permission-mode","acceptEdits"]`).
 - **Đo 7/10 (Windows) — lý do chọn (b):** (a) `claude -p` phiên mới: ~44k token ngữ cảnh, ~4s, trả lời được lên thẻ, nhưng **app KHÔNG hiện phiên đó** (list_sessions không có; phiên ghim vẫn trống). (b) chuyển tin vào phiên ghim trống qua `send_message` của một phiên khác: phiên thức ngay, trả lời ~3s, **hiện ngay trong app** với cliSessionId mới, ~81k token ngữ cảnh — nhưng chỉ làm được từ trong một phiên app (daemon không gọi được).
 - **Lần đầu nối:** daemon mặc định `fresh` (bỏ hàng đợi tin cũ, không thức cả loạt phiên vì tin tuần trước); muốn nhận tồn đọng: `defaults.first_run: "backlog"`.

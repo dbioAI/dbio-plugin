@@ -267,6 +267,51 @@ test('blank_mode: "headless" (opt-in) ⇒ vẫn gọi adapter (phiên ẩn), kh�
   try { await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1)); await waitFor(() => woken.length === 1, 8000); assert.equal(posted.length, 0); } finally { d.stop(); await srv.stop(); }
 });
 
+test('#1022 adapter tự tạo phiên (spawns) + phiên ghim TRỐNG ⇒ gọi adapter ngay, KHÔNG cầu PM/thư ký; blank_mode "relay" ⇒ cầu như cũ', async () => {
+  for (const [mode, expectWake] of [[undefined, true], ['relay', false]]) {
+    const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+    const name = uniq(); const woken = []; const posted = [];
+    const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x', ...(mode ? { blank_mode: mode } : {}) } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' } });
+    const d = createDaemon({
+      loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+      makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+      getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
+      stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+    });
+    try {
+      await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+      if (expectWake) { await waitFor(() => woken.length === 1, 8000); assert.equal(posted.length, 0, 'không cầu'); assert.equal(woken[0].events[0].task, '162801#9', 'adapter nhận thẻ để /staff'); }
+      else { await waitFor(() => posted.length === 1, 8000); assert.equal(woken.length, 0); assert.match(posted[0].body, /CẦU KHẨN/); }
+    } finally { d.stop(); await srv.stop(); }
+  }
+});
+
+test('#1022 nhánh (4): tự tạo phiên HỎNG ≥ max_relays lần liên tiếp ⇒ mới cầu relay_to', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); let tries = 0; const posted = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, retry_s: 0.05, relay_to: 'PM giao việc', max_relays: 3 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async () => { tries++; return { ok: false, detail: 'claude không chạy được' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+    await waitFor(() => posted.some((p) => /CẦU KHẨN/.test(p.body ?? '')), 10000);
+    assert.equal(tries, 3, 'thử tự tạo đủ 3 lần rồi mới cầu');
+  } finally { d.stop(); await srv.stop(); }
+});
+
+test('#1022 decideWake: phiên ghim trống mà phiên TỰ TẠO đang ghi ⇒ busy (không chạy song song); không spawn ⇒ verify như cũ', async () => {
+  const { decideWake } = await import('../lib/agentd/rules.mjs');
+  const batch = [{ firstSeen: Date.now() }];
+  assert.equal(decideWake({ batch, blank: true, spawn: true, activeAgoMs: 10_000 }), 'busy');
+  assert.equal(decideWake({ batch, blank: true, spawn: true, activeAgoMs: 600_000 }), 'verify');
+  assert.equal(decideWake({ batch, blank: true, spawn: true, activeAgoMs: null }), 'verify');
+  assert.equal(decideWake({ batch, blank: true, activeAgoMs: 10_000 }), 'verify');
+});
+
 test('agentd lần ĐẦU nối: fresh (bỏ tin cũ) theo mặc định; first_run: "backlog" ⇒ nhận tin cũ', async () => {
   const seen = [];
   const mk = (first_run) => {
