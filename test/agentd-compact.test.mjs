@@ -35,7 +35,7 @@ function mk({ srv, adapter, defaults = {}, entry = {}, tasks = (who) => [{ id: 7
     makeClient: () => ({
       init: async () => 1234, tb: async () => ({ data: { tasks: typeof tasks === 'function' ? tasks(name) : tasks, columns: COLS } }),
       ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }),
-      call: async (tool, a) => { posted.push(a); return {}; },
+      call: async (tool, a) => { if (a?.action !== 'task_get') posted.push(a); return {}; },
     }),
     getAdapter: () => ({ name: 'fake-desktop', ...adapter, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: srv ? (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }) : undefined,
@@ -165,11 +165,23 @@ test('phiên TRỐNG không cầm thẻ liên quan: tin @nhắc cũ ⇒ ACK, KH�
   const { d, posted } = mk({ srv, tasks: [], adapter: { isBlank: () => true, activeAgoMs: () => null, overLimit: () => ({ blocked: false }) } });
   try {
     await d.start(); await waitFor(() => srv.conns.length === 1);
-    srv.conns[0].send(evt(1, { task: '1234#9', kind: 'mention', text: 'nhắc cũ đã xử lý' }));
+    srv.conns[0].send(evt(1, { task: '1234#9', kind: 'mention', text: 'nhắc cũ đã xử lý', at: new Date(Date.now() - 8 * 3_600_000).toISOString() }));
     await waitFor(() => srv.conns[0].received.some((f) => f.op === 'ack' && f.ids.includes(1)), 8000);
     assert.equal(posted.length, 0, 'không cầm thẻ ⇒ không đánh thức PM/thư ký');
     srv.conns[0].send(evt(2, { task: '1234#10', kind: 'assign', text: 'việc mới' }));
     await waitFor(() => posted.length === 1, 8000); assert.match(posted[0].body, /CẦU KHẨN/);
+  } finally { d.stop(); await srv.stop(); }
+});
+
+/* ---------- #1029: agentd v0.3.3 nuốt @nhắc rà (Qa) trên thẻ người khác cầm ⇒ #1027 kẹt 3h20' ---------- */
+test('#1029 phiên TRỐNG không cầm thẻ: @nhắc rà MỚI trên thẻ người khác cầm ⇒ CẦU, KHÔNG ack-bỏ', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const { d, posted } = mk({ srv, tasks: [], adapter: { isBlank: () => true, activeAgoMs: () => null, overLimit: () => ({ blocked: false }) } });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(3, { task: '1234#22', kind: 'mention', text: '@Qa nhờ rà #1027 (thẻ đụng tiền)' }));
+    await waitFor(() => posted.length === 1, 8000); assert.match(posted[0].body, /CẦU KHẨN/);
+    assert.ok(!srv.conns[0].received.filter((f) => f.op === 'ack').flatMap((f) => f.ids).includes(3), 'tin nhắc rà KHÔNG được ack khi chưa giao tới phiên');
   } finally { d.stop(); await srv.stop(); }
 });
 

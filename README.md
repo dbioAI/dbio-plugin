@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.3.3** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.3.4** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -94,6 +94,8 @@ Tắt: `defaults.auto_compact: false` hoặc từng mục `"auto_compact": false
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
 
 ### Phiên vừa CLEAR (#872) và chống mất tin
+
+**v0.3.4 (#1029) — sửa NUỐT tin.** Phiên trống không cầm thẻ: tin gửi THẲNG cho NV (@nhắc / nhờ rà / giao việc) trên thẻ người khác cầm **không còn bị ack-bỏ** — vẫn thức (tạo phiên / cầu). Chỉ bỏ: bản sao, `children_done`/`new_unassigned`, @nhắc cũ hơn `fresh_keep_hours` (6h).
 
 **v0.3.3 (#1022, chủ chốt 12/10) — agentd TỰ đưa việc tới nhân viên, không qua PM/thư ký.** Adapter `claude-desktop`, mặc định `blank_mode: "spawn"`:
 1. Phiên ghim **có ngữ cảnh** ⇒ `claude --resume` như cũ.
