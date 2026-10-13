@@ -150,3 +150,32 @@ test('daemon: lease Chrome thật gắn với run đã đóng ⇒ nhịp 30s t�
     const st = JSON.parse(readFileSync(process.env.DBIO_AGENTD_STATUS, 'utf8')); assert.deepEqual(st.leases.map((l) => [l.resource, l.holder, l.gen]), [['browser', 'Z', 2]]);
   } finally { d.stop(); }
 });
+
+test('daemon #1036: agentd (không phải model) ghi bình luận BẮT ĐẦU + KẾT THÚC lên thẻ; lượt lỗi ⇒ 🛑 có lý do, không @ ai, và hiện ở trạng thái nhân viên', async () => {
+  const calls = [];
+  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { calls.push(a); return {}; } });
+  const d = mkDaemon({ A: { adapter: 'command', command: [process.execPath, script('ann-ok', { result: OK_RESULT })] }, B: { adapter: 'command', command: [process.execPath, script('ann-err', { result: ERR_RESULT, code: 1 })] } }, {}, { makeClient });
+  await d.load();
+  await d.wakeNow('A', 'x', [{ task: '162801#1036', kind: 'assign' }]); await until(() => calls.length >= 2);
+  assert.match(calls[0].body, /^▶️ dbio-agentd: lượt ngầm của A BẮT ĐẦU/); assert.equal(calls[0].task_id, 1036); assert.equal(calls[0].profile_id, 162801); assert.equal(calls[0].as, 'A');
+  assert.match(calls[1].body, /^⏹ dbio-agentd: lượt ngầm của A KẾT THÚC — XONG/); assert.match(calls[1].body, /token vào 110 cache-đọc 2k cache-ghi 320 ra 55/);
+  await d.wakeNow('B', 'y', [{ task: '162801#1037', kind: 'assign' }]); await until(() => calls.length >= 4);
+  assert.match(calls[3].body, /^🛑 dbio-agentd: lượt ngầm của B KẾT THÚC — LỖI — rate_limited/); assert.match(calls[3].body, /token: không đo được/); assert.ok(!calls[3].body.includes('@'));
+  assert.match(d.st.get('B').lastError, /LỖI.*rate_limited/);
+});
+
+test('daemon #1036 WATCHDOG: lần chạy trước chết lặng > 5 phút (pid mất) ⇒ sổ cảnh báo + 🛑 lên thẻ run đang dở; nhịp mới (<5p) thì im', async () => {
+  const calls = []; const alerts = join(work, `alerts-${Math.random().toString(36).slice(2)}.jsonl`); process.env.DBIO_AGENTD_ALERTS = alerts;
+  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { calls.push(a); return {}; } });
+  const dead = 2 ** 22 + 777;
+  writeFileSync(process.env.DBIO_AGENTD_STATUS, JSON.stringify({ pid: dead, beat: Date.now() - 20 * 60_000, runs: [{ staff: 'NV1', card: '162801#1036' }] }));
+  const d = mkDaemon({}, {}, { makeClient }); await d.start();
+  try {
+    assert.equal(calls.length, 1); assert.match(calls[0].body, /^🛑 dbio-agentd trên máy .* CHẾT LẶNG 20 phút/); assert.equal(calls[0].task_id, 1036); assert.equal(calls[0].as, 'NV1');
+    const a = JSON.parse(readFileSync(alerts, 'utf8').trim()); assert.equal(a.kind, 'agentd_down'); assert.equal(a.gap_min, 20); assert.deepEqual(a.runs, ['162801#1036']);
+    assert.equal(JSON.parse(readFileSync(process.env.DBIO_AGENTD_STATUS, 'utf8')).watchdog.gap_min, 20);
+  } finally { d.stop(); }
+  calls.length = 0; writeFileSync(process.env.DBIO_AGENTD_STATUS, JSON.stringify({ pid: dead, beat: Date.now() - 60_000, runs: [{ staff: 'NV1', card: '162801#1036' }] }));
+  const d2 = mkDaemon({}, {}, { makeClient }); await d2.start(); d2.stop(); assert.equal(calls.length, 0, 'nhịp cũ chỉ 1 phút ⇒ không báo');
+  delete process.env.DBIO_AGENTD_ALERTS;
+});

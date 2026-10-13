@@ -222,7 +222,7 @@ test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới
   const s1 = fakeSpawnSid('sp-111');
   const r1 = await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'giao thẻ', events: [{ task: '162801#5', kind: 'assign' }], spawnFn: s1.fn });
   assert.ok(r1.ok && r1.blank); assert.ok(r1.detail.includes("TỰ TẠO phiên mới (claude-opus-5-5) cho thẻ 162801#5"), r1.detail);
-  assert.deepEqual(s1.calls[0].args, ['-p', '--output-format', 'json', '--name', 'DEV-PLATFORM', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
+  assert.deepEqual(s1.calls[0].args, ['-p', '--output-format', 'json', '--name', 'DEV-PLATFORM-5', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
   assert.equal(s1.calls[0].opts.cwd, 'D:\proj');
   assert.ok(s1.calls[0].stdin.startsWith('/staff platform-security 162801#5\n'), s1.calls[0].stdin.slice(0, 60));
   assert.equal((await r1.running).session_id, 'sp-111');
@@ -324,4 +324,15 @@ test('#965 keyFile: store số ⇒ <tên>@s<store>.json (không ghi đè khoá s
   assert.match(keyFile('Mimi', '4'), /Mimi@s4\.json$/);
   assert.match(keyFile('Mimi', null), /Mimi\.json$/);
   assert.match(keyFile('Mimi', 'x/../y'), /Mimi\.json$/);
+});
+
+test('#1036 kiểm phiên bản CLI ↔ model: CLI cũ hơn model cần ⇒ chặn trước spawn, báo đỏ; đủ/không biết ⇒ cho qua', async () => {
+  const { checkCliModel, cmpVer, minCliFor } = await import('../lib/agentd/cli-version.mjs');
+  assert.equal(cmpVer('2.1.296', '2.1.280'), 1); assert.equal(cmpVer('2.1.278', '2.1.280'), -1); assert.equal(cmpVer('2.1.280', '2.1.280'), 0);
+  assert.equal(minCliFor('claude-opus-5-5'), '2.1.280'); assert.equal(minCliFor('claude-sonnet-5-5'), null); assert.equal(minCliFor('claude-x-9', { 'x-9': '3.0.0' }), '3.0.0');
+  const old = checkCliModel({ model: 'claude-opus-5-5', getVersion: () => '2.1.278' });
+  assert.equal(old.ok, false); assert.match(old.detail, /2\.1\.278.*claude-opus-5-5.*≥ 2\.1\.280/);
+  assert.equal(checkCliModel({ model: 'claude-opus-5-5', getVersion: () => '2.1.296' }).ok, true);
+  assert.equal(checkCliModel({ model: 'claude-opus-5-5', getVersion: () => null }).ok, true, 'không biết phiên bản ⇒ không chặn oan');
+  assert.equal(checkCliModel({ model: 'claude-sonnet-5-5', getVersion: () => '1.0.0' }).ok, true);
 });

@@ -2,7 +2,7 @@
 
 Bộ nhẹ để một nhân viên AI (hoặc phòng ban) làm việc với **dbio** qua MCP: đọc/ghi thẻ trên sổ cái, hộp thư, canh tin, và đọc **AI Playbook** của vai mình. Không chứa mã backend, không có công cụ deploy.
 
-> Trạng thái: **v0.3.4** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
+> Trạng thái: **v0.3.5** — `dbio-staff` (+ `listen` nhận việc đẩy) và daemon `dbio-agentd`. Skill `/pm` `/staff` bản chung và khởi động máy mới: giai đoạn kế.
 
 ## Cài (3 bước)
 
@@ -57,7 +57,7 @@ Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi ch�
 ```json
 { "staff": { "<tên>": { "adapter": "claude-cli", "session": "<id phiên>", "cwd": "<thư mục>" } },
   "discover": { "enabled": false, "as": "<tên có khoá>" },
-  "defaults": { "coalesce_ms": 3000, "listener_confirm_s": 60, "redeliver_after_min": 3, "wake_timeout_s": 900, "retry_s": 30 },
+  "defaults": { "coalesce_ms": 3000, "listener_confirm_s": 60, "redeliver_after_min": 3, "wake_timeout_s": 14400, "retry_s": 30 },
   "rules": { "sweep": { "enabled": false, "as": "<tên thư ký>", "every_min": 15 } },
   "adapter_modules": [] }
 ```
@@ -94,6 +94,8 @@ Tắt: `defaults.auto_compact: false` hoặc từng mục `"auto_compact": false
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
 
 ### Phiên vừa CLEAR (#872) và chống mất tin
+
+**v0.3.5 (#1036) — agentd ĐO và không chết lặng.** (1) Sổ Run cục bộ `~/.dbio/agentd-runs` (`dbio-agentd runs`): model THỰC, tài khoản, token vào/cache-đọc/cache-ghi/ra từ usage CLI (thiếu ⇒ trống, không 0), nhịp 30s, mất 90s ⇒ mất liên lạc, đối soát mỗi phút. (2) Trần `max_slots` 3 lượt/máy; thẻ sang "Cần anh xử lý" ⇒ TRẢ slot. (3) Lease Chrome thật 1/máy có số fencing (`dbio-agentd lease acquire|renew|release|status browser --holder <tên>`). (4) `wake_timeout_s` mặc định 900 ⇒ 14400: đây là TRẦN an toàn, không còn là đồng hồ giết phiên 15'; bị dừng thì ghi rõ trên thẻ. (5) Chặn spawn khi Claude CLI cũ hơn model cần (opus-5-5 ≥ 2.1.280) + KẸT đỏ ngay trên thẻ. (6) agentd ghi bình luận BẮT ĐẦU / KẾT THÚC mỗi lượt ngầm lên thẻ (worker/model/tài khoản/lý do/token); phiên ngầm đặt tên `NV1-1036`. (7) Watchdog: Task Scheduler thêm trigger lặp 5'; daemon khởi động lại sau chết lặng > `watchdog_gap_min` (5) ⇒ `~/.dbio/agentd-alerts.jsonl` + 🛑 lên thẻ run dở.
 
 **v0.3.4 (#1029) — sửa NUỐT tin.** Phiên trống không cầm thẻ: tin gửi THẲNG cho NV (@nhắc / nhờ rà / giao việc) trên thẻ người khác cầm **không còn bị ack-bỏ** — vẫn thức (tạo phiên / cầu). Chỉ bỏ: bản sao, `children_done`/`new_unassigned`, @nhắc cũ hơn `fresh_keep_hours` (6h).
 
