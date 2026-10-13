@@ -16,7 +16,9 @@
  *   stuck <id> --partial [--kind owner|permission] "<việc chủ cần làm>" [--need "<cần gì>"] | --partial --clear  (#818 chờ chủ MỘT PHẦN — thẻ ở lại Đang làm)
  *                                       #744 KẸT có loại: work_state + staff_status + dòng KẸT cho người xem (server) · --clear = hết kẹt
  *   move <id> "<tên cột>"               chuyển cột
- *   new "<tiêu đề>" [--col "<cột>"] [--body "..."] [--labels a,b] [--prio 0-3] [--parent <thẻ cha>]    tạo thẻ (mặc định cột Nhận; 1 cấp cha–con)
+ *   new "<tiêu đề>" [--col "<cột>"] [--body "..."] [--labels a,b] [--prio 0-3] [--parent <thẻ cha>] [--area ..] [--sens ..] [--reason ..] [--requires '<json>']    tạo thẻ (mặc định cột Nhận; 1 cấp cha–con)
+ *   set <id> [--area <mảng>] [--sens money|auth|normal|content] [--reason needs_owner|needs_review|needs_secret|engine_down|over_budget] [--requires '<json>']   (#1039) đặt trường thẻ; giá trị none = gỡ
+ *                                       mảng: platform_money|ai_chat|studio|dash_web|internal_tools|verification · requires: {"capabilities":["chrome"],"resources":[{"id":"store-4","mode":"mutate"}]}
  *   propose "<tiêu đề>" [--body "..."] [--urgent]  KÊNH GÓP Ý (#828): thẻ "Góp ý: …" ở cột ĐANG TRAO ĐỔI, nhãn gop-y, bóng phía CHỦ; PM không thức.
  *                                       --urgent (lỗi nghiêm trọng đang ảnh hưởng thật) ⇒ thêm nhãn khan + @PM + @nhắc ⇒ PM thức.
  *                                       Thấy thiếu script / bước lặp tay / luật tốn token ⇒ propose, KHÔNG tự làm, KHÔNG dừng việc đang làm
@@ -86,9 +88,22 @@ import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
-  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce'];
+  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires'];
 const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out']);
 const [cmd, ...rest] = pos;
+/** #1039: 4 trường thẻ từ cờ (none|- = gỡ). Server kiểm giá trị; ở đây chỉ gom. */
+function cardFieldFlags() {
+  const out = {};
+  const pick = (flag, key) => { if (flags[flag] === undefined) return; const v = String(flags[flag]).trim(); out[key] = (v === 'none' || v === '-' || v === '') ? null : v; };
+  pick('area', 'area'); pick('sens', 'sensitivity'); pick('reason', 'blocked_reason');
+  if (flags.requires !== undefined) {
+    const v = String(flags.requires).trim();
+    if (v === 'none' || v === '-' || v === '') out.requires = null;
+    else { try { out.requires = JSON.parse(v); } catch { die('--requires phải là JSON {"capabilities":[...],"resources":[{"id":"..","mode":"read|mutate|transact"}]}'); } }
+  }
+  return out;
+}
+function fmtSecs(s) { s = Math.max(0, Math.round(Number(s) || 0)); if (s >= 86400) return `${Math.floor(s / 86400)}n${Math.floor((s % 86400) / 3600)}g`; if (s >= 3600) return `${Math.floor(s / 3600)}g${Math.floor((s % 3600) / 60)}p`; return `${Math.floor(s / 60)}p`; }
 if (cmd === 'watch' && process.env.DBIO_AGENTD_TURN) die('[watch] chặn: đang trong lượt thức NGẦM của dbio-agentd (headless) — không bật watch nền (listener mồ côi nuốt tin). Xử lý xong thì kết thúc.', 4);
 if (!cmd || flags.help) die(helpOf(import.meta.url), 0);
 
@@ -146,6 +161,10 @@ const cmds = {
     if (got) {
       console.log(`#${id} ${got.title ?? ''}\ncột: ${got.column?.name ?? got.column?.id ?? '?'} · ưu tiên ${got.priority ?? '?'} · nhãn ${(got.labels ?? []).join(',') || '-'}${got.by ? ` · bởi ${got.by}` : ''}`);
       if (got.description) console.log(`mô tả: ${cut(got.description, flags.full ? 6000 : 800)}`);
+      const cfl = [got.area && `mảng ${got.area_label ?? got.area}`, got.sensitivity && `độ nhạy ${got.sensitivity}`, got.blocked_reason && `chặn: ${got.blocked_reason}`, got.requires?.capabilities?.length && `cần năng lực ${got.requires.capabilities.join(',')}`, got.requires?.resources?.length && `cần tài nguyên ${got.requires.resources.map((r) => `${r.id}:${r.mode}`).join(',')}`].filter(Boolean).join(' · ');
+      if (cfl) console.log(`trường thẻ: ${cfl}`);
+      const ck = got.column_clock;
+      if (ck?.current) console.log(`đồng hồ: ở cột hiện tại ${fmtSecs(ck.current.seconds)}${ck.columns?.length > 1 ? ` · theo cột ${ck.columns.map((c) => `#${c.column_id}=${fmtSecs(c.seconds)}`).join(' ')}` : ''}${ck.approx ? ' (ước lượng)' : ''}`);
       const ws = got.work_state;
       if (ws) {
         const l1 = [ws.stage && `giai đoạn ${ws.stage}`, ws.branch && `nhánh ${ws.branch}`, ws.head && `head ${String(ws.head).slice(0, 7)}`, ws.pushed != null && (ws.pushed ? 'ĐÃ push' : '⚠️ CHƯA push'), ws.dirty?.length && `⚠️ ${ws.dirty.length} file dở`, ws.worktree && `worktree ${ws.worktree}`, ws.machine && `máy ${ws.machine}`].filter(Boolean).join(' · ');
@@ -235,6 +254,15 @@ const cmds = {
 
   async move() { const id = taskId(rest[0]); if (!rest[1]) die('Thiếu tên cột.'); await tb('task_move', { task_id: id, column_name: rest[1] }); recordTouch(WHO, id); console.log(`ok #${id} → ${rest[1]}`); },
 
+  /** #1039: đặt/gỡ mảng · độ nhạy · lý do chặn · tài nguyên cần của thẻ. */
+  async set() {
+    const id = taskId(rest[0]); const cf = cardFieldFlags();
+    if (!Object.keys(cf).length) die('Thiếu cờ: --area | --sens | --reason | --requires (none = gỡ).');
+    if (flags.dry) { console.log(`[dry] #${id} ← ${JSON.stringify(cf)}`); return; }
+    await tb('task_update', { task_id: id, ...cf }); recordTouch(WHO, id);
+    console.log(`ok #${id} ${Object.entries(cf).map(([k, v]) => `${k}=${v === null ? '-' : typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ')}`);
+  },
+
   async new() {
     if (!rest[0]) die('Thiếu tiêu đề.');
     const board = await tb('get'); const cols = board.data?.columns ?? [];
@@ -243,7 +271,7 @@ const cmds = {
     if (!col) die(`Không thấy cột "${flags.col ?? 'Nhận'}" — có: ${cols.map((x) => x.name).join(' · ')}`);
     const labels = flags.labels ? String(flags.labels).split(',').map((s) => s.trim()).filter(Boolean) : [];
     if (flags.dry) { console.log(`[dry] tạo thẻ "${rest[0]}" ở cột ${col.name}${labels.length ? ` nhãn ${labels.join(',')}` : ''}`); return; }
-    const r = await tb('task_create', { column_id: col.id, title: rest[0], ...(flags.body ? { description: flags.body } : {}), ...(labels.length ? { labels } : {}), ...(flags.prio != null ? { priority: Number(flags.prio) } : {}), ...(flags.parent ? { parent: taskId(flags.parent) } : {}) });
+    const r = await tb('task_create', { column_id: col.id, title: rest[0], ...(flags.body ? { description: flags.body } : {}), ...(labels.length ? { labels } : {}), ...(flags.prio != null ? { priority: Number(flags.prio) } : {}), ...(flags.parent ? { parent: taskId(flags.parent) } : {}), ...cardFieldFlags() });
     let pnote = '';
     if (flags.parent) { // #658.7: server cũ lặng lẽ bỏ qua trường lạ ⇒ kiểm lại bằng task_get
       try { const back = (await tb('task_get', { task_id: r.data?.id })).task; pnote = back?.parent?.id === taskId(flags.parent) ? ` · thuộc #${taskId(flags.parent)}` : ' · ⚠️ server CHƯA hỗ trợ thẻ cha (parent bị bỏ qua)'; } catch { pnote = ' · ⚠️ không kiểm được parent (server chưa có task_get)'; }
@@ -457,6 +485,7 @@ const cmds = {
     if (flags.clear) {
       await tb('checkpoint', { task_id: id, work_state: keep });
       await ai('staff_status', { who: WHO, mode: 'set', state: 'working', task: ref(id), note: null });
+      if (prev && typeof prev === 'object' && prev.blocked === 'owner') await tb('task_update', { task_id: id, blocked_reason: null }).catch(() => {}); // #1039
       console.log(`ok #${id} hết kẹt · ${WHO} = working`);
       return;
     }
@@ -467,6 +496,7 @@ const cmds = {
     const need = flags.need ? String(flags.need).trim() : '';
     try { await tb('checkpoint', { task_id: id, work_state: { ...keep, blocked: kind, waiting: why, ...(need ? { need } : {}) } }); }
     catch (e) { die(`checkpoint lỗi (server chưa có #744 phần 5?): ${e?.message ?? e}`); }
+    if (kind === 'owner') await tb('task_update', { task_id: id, blocked_reason: 'needs_owner' }).catch(() => {}); // #1039 dash gom "Cần anh"; server cũ chưa có ⇒ bỏ qua
     await ai('staff_status', { who: WHO, mode: 'set', state: kind === 'owner' ? 'waiting_owner' : 'blocked', task: ref(id), note: `${VI[kind]}: ${why}${need ? ` · cần: ${need}` : ''}`.slice(0, 300) });
     console.log(`ok #${id} KẸT (${VI[kind]}) · ${WHO} = ${kind === 'owner' ? 'waiting_owner' : 'blocked'}`);
   },
