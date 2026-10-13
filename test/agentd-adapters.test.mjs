@@ -47,7 +47,7 @@ test('claude-cli: --resume <session> -p, lời nhắc qua STDIN (không nằm tr
   const s = fakeSpawn();
   const r = await getAdapter('claude-cli').wake({ staff: 'NV1', entry: { session: 'abc-123', cwd: '/w', args: ['--permission-mode', 'acceptEdits'] }, prompt: 'làm việc đi; rm -rf / $(x)', spawnFn: s.fn });
   assert.ok(r.ok);
-  assert.deepEqual(s.calls[0].args, ['--resume', 'abc-123', '-p', '--permission-mode', 'acceptEdits']);
+  assert.deepEqual(s.calls[0].args, ['--resume', 'abc-123', '-p', '--output-format', 'json', '--permission-mode', 'acceptEdits']);
   assert.equal(s.calls[0].stdin, 'làm việc đi; rm -rf / $(x)');
   assert.equal(s.calls[0].opts.cwd, '/w');
   assert.equal((await r.running).code, 0);
@@ -96,13 +96,13 @@ test('claude-desktop: local_<uuid> ⇒ cliSessionId + cwd lấy từ tệp phiê
   assert.equal(resolveDesktopSession('local_khong', [root]), null);
   const s = fakeSpawn();
   const r = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_aaa', sessions_dir: root }, prompt: 'p', spawnFn: s.fn });
-  assert.ok(r.ok); assert.deepEqual(s.calls[0].args, ['--resume', 'cli-111', '-p']); assert.equal(s.calls[0].opts.cwd, 'D:\\x');
+  assert.ok(r.ok); assert.deepEqual(s.calls[0].args, ['--resume', 'cli-111', '-p', '--output-format', 'json']); assert.equal(s.calls[0].opts.cwd, 'D:\\x');
   const miss = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_khong', sessions_dir: root }, prompt: 'p', spawnFn: s.fn });
   assert.equal(miss.ok, false); assert.match(miss.detail, /không thấy/); // #1022 spawn: mất tệp phiên mà không biết cwd ⇒ lỗi rõ
   const missRelay = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_khong', sessions_dir: root, blank_mode: 'relay' }, prompt: 'p', spawnFn: s.fn });
   assert.equal(missRelay.ok, false); assert.match(missRelay.detail, /không thấy phiên/);
   await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'cli-direct' }, prompt: 'p', spawnFn: s.fn }); // đã là cliSessionId
-  assert.deepEqual(s.calls[1].args, ['--resume', 'cli-direct', '-p']);
+  assert.deepEqual(s.calls[1].args, ['--resume', 'cli-direct', '-p', '--output-format', 'json']);
 });
 
 test('hermes: chỉ https (hoặc http localhost); ký HMAC bằng biến môi trường; thiếu biến ⇒ lỗi; HTTP lỗi ⇒ ok:false', async () => {
@@ -236,7 +236,7 @@ test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới
   writeFileSync(join(proj, 'D--x', 'sp-222.jsonl'), JSON.stringify({ message: { usage: { input_tokens: 5000 } } }) + '\n');
   const s3 = fakeSpawnSid('khong-dung');
   const r3 = await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'bình luận 2', events: [{ task: '162801#5', kind: 'comment' }], spawnFn: s3.fn });
-  assert.deepEqual(s3.calls[0].args, ['--resume', 'sp-222', '-p', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
+  assert.deepEqual(s3.calls[0].args, ['--resume', 'sp-222', '-p', '--output-format', 'json', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
   assert.equal(s3.calls[0].stdin, 'bình luận 2'); assert.match(r3.detail, /--resume phiên tự tạo sp-222/);
   assert.ok(ad.activeAgoMs(base, 'DEV PLATFORM') < 10_000, 'phiên ghim trống ⇒ tuổi = phiên tự tạo (daemon không chạy song song)');
   // thẻ KHÁC ⇒ phiên mới
@@ -255,7 +255,7 @@ test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới
   assert.ok(r6.ok); assert.match(r6.detail, /quá ngưỡng: TỰ TẠO/); assert.ok(!s6.calls[0].args.includes('cli-heavy'));
   const s7 = fakeSpawnSid('x');
   await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, allow_large: true }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s7.fn });
-  assert.deepEqual(s7.calls[0].args.slice(0, 3), ['--resume', 'cli-heavy', '-p']);
+  assert.deepEqual(s7.calls[0].args.slice(0, 5), ['--resume', 'cli-heavy', '-p', '--output-format', 'json']);
   // relay ⇒ quá ngưỡng vẫn chặn như cũ
   const r8 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, blank_mode: 'relay' }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s7.fn });
   assert.equal(r8.ok, false); assert.equal(r8.blocked, true);
