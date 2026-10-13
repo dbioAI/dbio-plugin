@@ -336,3 +336,15 @@ test('#1036 kiểm phiên bản CLI ↔ model: CLI cũ hơn model cần ⇒ ch�
   assert.equal(checkCliModel({ model: 'claude-opus-5-5', getVersion: () => null }).ok, true, 'không biết phiên bản ⇒ không chặn oan');
   assert.equal(checkCliModel({ model: 'claude-sonnet-5-5', getVersion: () => '1.0.0' }).ok, true);
 });
+
+test('#1036 bestClaudeBin: chọn CLI MỚI NHẤT giữa app Desktop và PATH; dò thư mục claude-code/<ver>/<băm>/', async () => {
+  const { appCliCandidates, bestClaudeBin } = await import('../lib/agentd/cli-version.mjs');
+  const la = mkdtempSync(join(tmpdir(), 'la-')); const base = join(la, 'Packages', 'Claude_x', 'LocalCache', 'Roaming', 'Claude', 'claude-code');
+  for (const [v, h] of [['2.1.288', 'aa'], ['2.1.295', 'bb']]) { mkdirSync(join(base, v, h), { recursive: true }); writeFileSync(join(base, v, h, 'claude.exe'), ''); }
+  mkdirSync(join(base, 'junk', 'zz'), { recursive: true });
+  const c = appCliCandidates({ env: { LOCALAPPDATA: la }, home: la, plat: 'win32' });
+  assert.deepEqual(c.map((x) => x.version).sort(), ['2.1.288', '2.1.295']);
+  assert.equal(bestClaudeBin({ candidates: c, getVersion: () => '2.1.278' }).version, '2.1.295');
+  assert.equal(bestClaudeBin({ candidates: c, getVersion: () => '2.1.300' }).source, 'path');
+  assert.equal(bestClaudeBin({ candidates: [], getVersion: () => null }), null);
+});
