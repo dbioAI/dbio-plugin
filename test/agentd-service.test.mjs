@@ -23,6 +23,7 @@ test('Windows: Register-ScheduledTask -AtLogOn (schtasks ONLOGON cần admin ⇒
   assert.equal(reg[0], 'powershell.exe'); assert.ok(reg.includes('-NonInteractive'));
   const cmd = reg.at(-1);
   assert.match(cmd, /Register-ScheduledTask -TaskName 'dbio-agentd'/); assert.match(cmd, /New-ScheduledTaskTrigger -AtLogOn -User \$u/);
+  assert.ok(cmd.includes('New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)')); assert.ok(cmd.includes('-Trigger @($t, $w)')); assert.match(cmd, /-MultipleInstances IgnoreNew/); // canh chết lặng #1036
   assert.match(cmd, /-LogonType Interactive -RunLevel Limited/); assert.match(cmd, /-ExecutionTimeLimit \(\[TimeSpan\]::Zero\)/);
   assert.match(cmd, /-WindowStyle Hidden -File ""?[^']*dbio-agentd-run\.ps1/);
   assert.match(p.install[1].at(-1), /Start-ScheduledTask -TaskName 'dbio-agentd'/);

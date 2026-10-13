@@ -10,6 +10,8 @@
  *   init [--force]           ghi tệp cấu hình mẫu (~/.dbio/agentd.json)
  *   wake <tên> [lời nhắc]    thử đánh thức một nhân viên qua adapter đã cấu hình (kiểm cấu hình mà không chờ việc thật)
  *   adapters                 danh sách adapter
+ *   runs [--month YYYY-MM] [--staff <tên>] [--limit N] [--json]   sổ Run do agentd ĐO (model thật, tài khoản, token vào/cache/ra từ CLI; thiếu ⇒ trống, không 0) + tỉ lệ run có usage thật
+ *   lease acquire|renew|release|status <tài nguyên> …   lease cả máy cho tài nguyên chia sẻ (hiện: browser = Chrome thật, 1 chủ/lúc); acquire --holder <tên> [--ttl 300] [--pid N]; renew/release --holder <tên> --gen N
  *
  * Cấu hình: MỘT tệp ~/.dbio/agentd.json (DBIO_AGENTD_CONFIG đổi đường dẫn) — xem README mục "Daemon dbio-agentd". Khoá: ~/.dbio/staff-keys/<tên>.json (không in, không ghi log).
  * Mã thoát: 0 ok · 1 lỗi · 2 thiếu cấu hình/khoá.
@@ -25,8 +27,10 @@ import { adapterNames } from '../lib/agentd/adapters/index.mjs';
 import { createDaemon, readStatus } from '../lib/agentd/daemon.mjs';
 import { installPlan } from '../lib/agentd/service.mjs';
 import { ageMin } from '../lib/agentd/rules.mjs';
+import { createRunStore, summarize } from '../lib/agentd/runs.mjs';
+import { createLeases, RESOURCES } from '../lib/agentd/lease.mjs';
 
-const { flags, pos } = parseArgs(process.argv.slice(2));
+const { flags, pos } = parseArgs(process.argv.slice(2), ['--month', '--staff', '--limit', '--holder', '--gen', '--ttl', '--pid', '--run']);
 const [cmd, ...rest] = pos;
 if (!cmd || flags.help || flags.h) die(helpOf(import.meta.url), 0);
 const SCRIPT = resolve(fileURLToPath(import.meta.url));
@@ -70,6 +74,7 @@ const cmds = {
     if (flags.json) { console.log(JSON.stringify({ service_registered: registered, running: alive, ...st })); return; }
     console.log(`dịch vụ: ${registered ? 'đã cài' : 'CHƯA cài'} · daemon: ${alive ? `ĐANG CHẠY (pid ${st.pid}, ${Math.round((Date.now() - st.started) / 60_000)} phút)` : 'KHÔNG chạy'}${st?.machine ? ` · máy ${st.machine}` : ''}`);
     for (const e of st?.config_errors ?? []) console.log(`⚠️ cấu hình: ${e}`);
+    if (alive && st?.slots) console.log(`  slot: ${st.slots.used}/${st.slots.max} đang dùng${(st.runs ?? []).length ? ` · run mở: ${st.runs.map((r) => `${r.staff}${r.card ? ` ${r.card}` : ''}${r.slot_returned ? ' (đã trả slot)' : ''}`).join(', ')}` : ''}`);
     for (const [n, s] of Object.entries(st?.staff ?? {})) console.log(`  ${n} · ${s.adapter}${s.discovered ? ' (tự dò)' : ''} · ${s.connected ? `nối ${s.transport}` : 'MẤT KẾT NỐI'} · thức ${s.wakes} lần${s.last_wake_at ? ` (cuối ${ageMin(s.last_wake_at)}p trước)` : ''}${s.queued ? ` · chờ ${s.queued}` : ''}${s.hold ? ` · ⏸ hoãn: ${s.hold}` : ''}${s.last_error ? ` · ⚠️ ${s.last_error}` : ''}`);
     if (!Object.keys(st?.staff ?? {}).length && alive) console.log('  (chưa có nhân viên nào — xem cấu hình)');
   },
@@ -91,6 +96,35 @@ const cmds = {
   },
 
   async adapters() { console.log(adapterNames().join(' · ')); },
+
+  async runs() {
+    const store = createRunStore({});
+    const list = store.list({ month: flags.month === true ? undefined : flags.month, staff: flags.staff === true ? null : (flags.staff ?? null), limit: Number(flags.limit) > 0 ? Number(flags.limit) : 200 });
+    const sum = summarize(list);
+    if (flags.json) { console.log(JSON.stringify({ summary: sum, runs: list })); return; }
+    const k = (n) => (n == null ? '—' : n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+    for (const r of list.slice(0, 30).reverse()) {
+      const t = r.tokens;
+      console.log(`${new Date(r.started_at).toISOString().slice(5, 16).replace('T', ' ')} ${(r.staff ?? '').padEnd(8)} ${(r.card ?? '—').padEnd(10)} ${(r.outcome ?? 'đang chạy').padEnd(11)} ${(r.models?.[0] ?? r.model_requested ?? '—').padEnd(22)} ${r.account ?? '—'} · vào ${k(t?.input)} cache-đọc ${k(t?.cache_read)} cache-ghi ${k(t?.cache_write)} ra ${k(t?.output)}`);
+    }
+    console.log(`tổng ${sum.runs} run (${sum.running} đang chạy) · có usage thật ${sum.with_usage}/${sum.measurable}${sum.usage_pct == null ? '' : ` = ${sum.usage_pct}%`}${sum.tokens ? ` · token vào ${k(sum.tokens.input)} cache-đọc ${k(sum.tokens.cache_read)} cache-ghi ${k(sum.tokens.cache_write)} ra ${k(sum.tokens.output)}` : ''}`);
+  },
+
+  async lease() {
+    const [act, res = 'browser'] = rest;
+    if (!['acquire', 'renew', 'release', 'status'].includes(act ?? '')) die('Dùng: lease acquire|renew|release|status [tài nguyên] --holder <tên> [--gen N] [--ttl giây] [--pid N]');
+    if (!RESOURCES.includes(res)) die(`Tài nguyên lạ "${res}". Có: ${RESOURCES.join(' · ')}`);
+    const L = createLeases({});
+    const out = (o, ok = o.ok !== false) => { console.log(flags.json ? JSON.stringify(o) : (ok ? 'ok ' : 'KHÔNG ') + JSON.stringify(o)); process.exit(ok ? 0 : 3); };
+    const holder = flags.holder === true ? '' : String(flags.holder ?? '');
+    if (act === 'status') { const v = L.status(res) ?? { held: false, gen: 0 }; out(v, true); }
+    if (!holder) die('Thiếu --holder <tên>');
+    const gen = flags.gen == null || flags.gen === true ? null : Number(flags.gen);
+    const ttl = Number(flags.ttl) > 0 ? Number(flags.ttl) : undefined;
+    if (act === 'acquire') out(L.acquire(res, { holder, run_id: flags.run === true ? null : (flags.run ?? null), pid: Number(flags.pid) > 0 ? Number(flags.pid) : null, ttl_s: ttl }));
+    if (act === 'renew') { if (gen == null) die('Thiếu --gen N (số fencing nhận lúc acquire)'); out(L.renew(res, { holder, gen, ttl_s: ttl })); }
+    out(L.release(res, { holder, gen }));
+  },
 };
 
 if (!cmds[cmd]) die(`Lệnh lạ "${cmd}". Có: ${Object.keys(cmds).join(' · ')}`);

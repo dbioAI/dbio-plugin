@@ -133,3 +133,20 @@ test('daemon: run mồ côi của daemon cũ — pid đã mất ⇒ đóng "lost
     const st = JSON.parse(readFileSync(process.env.DBIO_AGENTD_STATUS, 'utf8')); assert.equal(st.slots.max, 3); assert.equal(st.runs.length, 1); assert.equal(st.runs[0].staff, 'Y');
   } finally { d.stop(); }
 });
+
+test('daemon: lease Chrome thật gắn với run đã đóng ⇒ nhịp 30s tự nhả; lease của run còn mở thì giữ; status ghi lease đang giữ', async () => {
+  const dir = join(work, 'lease-runs'); const store = createRunStore({ dir });
+  const live = store.start({ staff: 'Y', card: '1#3', adapter: 'claude-desktop', machine: 'M' }); store.update(live.run_id, { pid: process.pid });
+  const { config } = normalizeConfig({ staff: {}, defaults: {} });
+  const d = createDaemon({ loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, runs: createRunStore({ dir }) });
+  await d.start();
+  try {
+    assert.equal(d.leases.acquire('browser', { holder: 'Y', run_id: live.run_id }).ok, true);
+    d.beatRuns(); assert.equal(d.leases.status('browser').held, true);
+    d.runs.end(live.run_id, { outcome: 'ok', exit_code: 0 });
+    d.beatRuns(); assert.equal(d.leases.status('browser').held, false);
+    assert.equal(d.leases.acquire('browser', { holder: 'Z' }).gen, 2);
+    d.writeStatus();
+    const st = JSON.parse(readFileSync(process.env.DBIO_AGENTD_STATUS, 'utf8')); assert.deepEqual(st.leases.map((l) => [l.resource, l.holder, l.gen]), [['browser', 'Z', 2]]);
+  } finally { d.stop(); }
+});
