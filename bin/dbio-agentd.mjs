@@ -46,7 +46,7 @@ const cmds = {
     process.on('SIGINT', bye); process.on('SIGTERM', bye);
     // để lại dấu vết khi chết (#1036: 14/10 chết lặng, log không có dòng nào)
     const stamp = (m) => { try { process.stderr.write(`[agentd ${new Date().toISOString().slice(11, 19)}Z] ${m}\n`); } catch { /* bỏ */ } };
-    process.on('uncaughtException', (e) => { stamp(`uncaughtException: ${e?.stack ?? e}`); process.exit(1); });
+    process.on('uncaughtException', (e) => { stamp(`uncaughtException (bỏ qua, daemon vẫn chạy): ${e?.stack ?? e}`); });
     process.on('unhandledRejection', (e) => stamp(`unhandledRejection: ${e?.stack ?? e}`));
     process.on('SIGHUP', () => { stamp('SIGHUP'); bye(); }); process.on('SIGBREAK', () => { stamp('SIGBREAK'); bye(); });
     process.on('exit', (c) => stamp(`thoát mã ${c}`));
