@@ -111,7 +111,7 @@ const cmds = {
     const k = (n) => (n == null ? '—' : n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
     for (const r of list.slice(0, 30).reverse()) {
       const t = r.tokens;
-      console.log(`${new Date(r.started_at).toISOString().slice(5, 16).replace('T', ' ')} ${(r.staff ?? '').padEnd(8)} ${(r.card ?? '—').padEnd(10)} ${(r.outcome ?? 'đang chạy').padEnd(11)} ${(r.models?.[0] ?? r.model_requested ?? '—').padEnd(22)} ${r.account ?? '—'} · vào ${k(t?.input)} cache-đọc ${k(t?.cache_read)} cache-ghi ${k(t?.cache_write)} ra ${k(t?.output)}`);
+      console.log(`${new Date(r.started_at).toISOString().slice(5, 16).replace('T', ' ')} ${(r.staff ?? '').padEnd(8)} ${(r.card ?? '—').padEnd(10)} ${(r.outcome ?? 'đang chạy').padEnd(11)} ${String(r.models?.[0]?.model ?? r.models?.[0] ?? r.model_requested ?? "—").padEnd(22)} ${r.account ?? '—'} · vào ${k(t?.input)} cache-đọc ${k(t?.cache_read)} cache-ghi ${k(t?.cache_write)} ra ${k(t?.output)}`);
     }
     console.log(`tổng ${sum.runs} run (${sum.running} đang chạy) · có usage thật ${sum.with_usage}/${sum.measurable}${sum.usage_pct == null ? '' : ` = ${sum.usage_pct}%`}${sum.tokens ? ` · token vào ${k(sum.tokens.input)} cache-đọc ${k(sum.tokens.cache_read)} cache-ghi ${k(sum.tokens.cache_write)} ra ${k(sum.tokens.output)}` : ''}`);
   },
