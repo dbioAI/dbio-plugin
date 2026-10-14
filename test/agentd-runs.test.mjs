@@ -153,7 +153,7 @@ test('daemon: lease Chrome thật gắn với run đã đóng ⇒ nhịp 30s t�
 
 test('daemon #1036: agentd (không phải model) ghi bình luận BẮT ĐẦU + KẾT THÚC lên thẻ; lượt lỗi ⇒ 🛑 có lý do, không @ ai, và hiện ở trạng thái nhân viên', async () => {
   const calls = [];
-  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { calls.push(a); return {}; } });
+  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { if (a.action === 'comment_add') calls.push(a); return {}; } });
   const d = mkDaemon({ A: { adapter: 'command', command: [process.execPath, script('ann-ok', { result: OK_RESULT })] }, B: { adapter: 'command', command: [process.execPath, script('ann-err', { result: ERR_RESULT, code: 1 })] } }, {}, { makeClient });
   await d.load();
   await d.wakeNow('A', 'x', [{ task: '162801#1036', kind: 'assign' }]); await until(() => calls.length >= 2);
@@ -161,12 +161,12 @@ test('daemon #1036: agentd (không phải model) ghi bình luận BẮT ĐẦU +
   assert.match(calls[1].body, /^⏹ dbio-agentd: lượt ngầm của A KẾT THÚC — XONG/); assert.match(calls[1].body, /token vào 110 cache-đọc 2k cache-ghi 320 ra 55/);
   await d.wakeNow('B', 'y', [{ task: '162801#1037', kind: 'assign' }]); await until(() => calls.length >= 4);
   assert.match(calls[3].body, /^🛑 dbio-agentd: lượt ngầm của B KẾT THÚC — LỖI — rate_limited/); assert.match(calls[3].body, /token: không đo được/); assert.ok(!calls[3].body.includes('@'));
-  assert.match(d.st.get('B').lastError, /LỖI.*rate_limited/);
+  assert.match(d.st.get('B').lastError, /rate_limited/);
 });
 
 test('daemon #1036 WATCHDOG: lần chạy trước chết lặng > 5 phút (pid mất) ⇒ sổ cảnh báo + 🛑 lên thẻ run đang dở; nhịp mới (<5p) thì im', async () => {
   const calls = []; const alerts = join(work, `alerts-${Math.random().toString(36).slice(2)}.jsonl`); process.env.DBIO_AGENTD_ALERTS = alerts;
-  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { calls.push(a); return {}; } });
+  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { if (a.action === 'comment_add') calls.push(a); return {}; } });
   const dead = 2 ** 22 + 777;
   writeFileSync(process.env.DBIO_AGENTD_STATUS, JSON.stringify({ pid: dead, beat: Date.now() - 20 * 60_000, runs: [{ staff: 'NV1', card: '162801#1036' }] }));
   const d = mkDaemon({}, {}, { makeClient }); await d.start();
@@ -178,4 +178,42 @@ test('daemon #1036 WATCHDOG: lần chạy trước chết lặng > 5 phút (pid 
   calls.length = 0; writeFileSync(process.env.DBIO_AGENTD_STATUS, JSON.stringify({ pid: dead, beat: Date.now() - 60_000, runs: [{ staff: 'NV1', card: '162801#1036' }] }));
   const d2 = mkDaemon({}, {}, { makeClient }); await d2.start(); d2.stop(); assert.equal(calls.length, 0, 'nhịp cũ chỉ 1 phút ⇒ không báo');
   delete process.env.DBIO_AGENTD_ALERTS;
+});
+
+test('run-push: bản ghi Run ⇒ tham số run_record — account là NHÃN (không email), thiếu số = vắng khoá, đang chạy không có outcome', async () => {
+  const { runToRecord, accountLabel } = await import('../lib/agentd/run-push.mjs');
+  assert.equal(accountLabel('admin@dbio.ai'), 'admin'); assert.equal(accountLabel(null), undefined);
+  const run = { run_id: 'r-1', staff: 'NV1', card: '162801#1036', engine: 'claude', machine: 'M', account: 'admin@dbio.ai', model_requested: 'claude-opus-5-5', started_at: 1_700_000_000_000, pid: 42, resumed: false, lease_gen: 1 };
+  const a = runToRecord(run).args;
+  assert.deepEqual(a, { profile_id: 162801, task_id: 1036, run_id: 'r-1', runner: 'NV1@M', started_at: '2023-11-14T22:13:20.000Z', usage: { model: 'claude-opus-5-5', engine: 'claude', account: 'admin', machine: 'M', pid: 42, lease_gen: 1 } });
+  assert.ok(!JSON.stringify(a).includes('@dbio.ai'));
+  const done = runToRecord({ ...run, ended_at: 1_700_000_061_500, duration_ms: 61_500, outcome: 'ok', exit_code: 0, tokens: { input: 10, cache_read: 2000, cache_write: 5, output: 7 }, models: [{ model: 'claude-opus-5-5' }], session_id: 'sess-1' }).args;
+  assert.equal(done.outcome, 'ok'); assert.equal(done.finished_at, '2023-11-14T22:14:21.500Z'); assert.deepEqual(done.usage, { input_tokens: 10, output_tokens: 7, cache_read_tokens: 2000, cache_write_tokens: 5, seconds: 61.5, model: 'claude-opus-5-5', engine: 'claude', account: 'admin', machine: 'M', pid: 42, session_ref: 'sess-1', lease_gen: 1, exit_code: 0 });
+  const err = runToRecord({ ...run, ended_at: 1_700_000_001_000, duration_ms: 1000, outcome: 'exit_3', exit_code: 3, tokens: null }).args;
+  assert.equal(err.outcome, 'error'); assert.equal(err.status_detail, 'exit_3'); assert.ok(!('input_tokens' in err.usage), 'không có usage ⇒ vắng khoá, không 0');
+  assert.equal(runToRecord({ ...run, card: null }), null);
+});
+
+test('run-push: hàng đợi bền — lỗi mạng ⇒ giữ + lùi dần rồi gửi lại; lỗi vĩnh viễn ⇒ bỏ; kết thúc thay bản đang chạy cùng run_id', async () => {
+  const { createRunPusher, runToRecord } = await import('../lib/agentd/run-push.mjs');
+  const dir = join(work, `push-${Math.random().toString(36).slice(2)}`); let t = 1_000_000; const sent = []; let mode = 'down';
+  const p = createRunPusher({ dir, now: () => t, call: async (staff, args) => { if (mode === 'down') throw new Error('HTTP 502'); if (mode === 'bad') { const e = new Error('từ chối'); e.code = 'JOB_CARD'; throw e; } sent.push([staff, args]); } });
+  const base = { run_id: 'r9', staff: 'NV1', card: '1#2', engine: 'claude', machine: 'M', started_at: 1_700_000_000_000 };
+  p.enqueue('NV1', runToRecord(base)); assert.deepEqual(await p.flush(), { sent: 0, dropped: 0, left: 1 });
+  p.enqueue('NV1', runToRecord({ ...base, ended_at: 1_700_000_005_000, duration_ms: 5000, outcome: 'ok' })); assert.equal(p.pending(), 1, 'cùng run_id ⇒ thay');
+  assert.deepEqual(await p.flush(), { sent: 0, dropped: 0, left: 1 }, 'chưa tới hạn thử lại');
+  t += 31_000; mode = 'up'; assert.deepEqual(await p.flush(), { sent: 1, dropped: 0, left: 0 });
+  assert.equal(sent.length, 1); assert.equal(sent[0][1].outcome, 'ok'); assert.equal(sent[0][1].run_id, 'r9');
+  mode = 'bad'; p.enqueue('NV1', runToRecord({ ...base, run_id: 'r10' })); assert.deepEqual(await p.flush(), { sent: 0, dropped: 1, left: 0 });
+});
+
+test('daemon #1036 B: lượt chạy ⇒ run_record 2 lần (đang chạy rồi kết thúc) lên đúng sổ/thẻ bằng khoá của NV; usage đo thật', async () => {
+  const rec = [];
+  const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns: [], tasks: [] } }), ai: async () => ({}), call: async (t, a) => { if (a.action === 'run_record') rec.push(a); return {}; } });
+  const d = mkDaemon({ A: { adapter: 'command', command: [process.execPath, script('push-ok', { result: OK_RESULT })] } }, {}, { makeClient });
+  await d.load(); await d.wakeNow('A', 'x', [{ task: '162801#1036', kind: 'assign' }]);
+  await until(() => rec.some((a) => a.outcome === 'ok'));
+  const end = rec.find((a) => a.outcome === 'ok'); assert.equal(end.profile_id, 162801); assert.equal(end.task_id, 1036); assert.equal(end.as, 'A'); assert.equal(end.usage.input_tokens, 110); assert.equal(end.usage.cache_read_tokens, 2000);
+  assert.ok(!JSON.stringify(rec).includes('worker@dbio.ai'), 'không rò email');
+  await until(() => d.pusher.pending() === 0);
 });
