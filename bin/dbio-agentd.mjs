@@ -27,6 +27,7 @@ import { adapterNames } from '../lib/agentd/adapters/index.mjs';
 import { createDaemon, readStatus } from '../lib/agentd/daemon.mjs';
 import { installPlan } from '../lib/agentd/service.mjs';
 import { ageMin } from '../lib/agentd/rules.mjs';
+import { installPm2, statusPm2, uninstallPm2 } from '../lib/agentd/pm2-cli.mjs';
 import { createRunStore, summarize } from '../lib/agentd/runs.mjs';
 import { createLeases, RESOURCES } from '../lib/agentd/lease.mjs';
 
@@ -54,6 +55,7 @@ const cmds = {
   },
 
   async install() {
+    if (flags.pm2) { const r = installPm2({ script: SCRIPT, flags, configFile }); if (!r.ok) die(`lỗi: ${r.error}`); return; }
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir(), env: { PATH: process.env.PATH, DBIO_AGENTD_CONFIG: process.env.DBIO_AGENTD_CONFIG } });
     if (flags.dry) { for (const f of plan.files) console.log(`# ghi ${f.path}\n${f.content}`); for (const c of plan.install) console.log(`$ ${c.join(' ')}`); return; }
     if (!existsSync(configFile())) console.error(`[agentd] lưu ý: chưa có ${configFile()} — chạy \`dbio-agentd init\` rồi điền nhân viên.`);
@@ -64,6 +66,7 @@ const cmds = {
   },
 
   async uninstall() {
+    if (flags.pm2) return uninstallPm2({ script: SCRIPT, flags });
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir() });
     if (flags.dry) { for (const c of plan.uninstall) console.log(`$ ${c.join(' ')}`); for (const f of plan.remove) console.log(`# xoá ${f}`); return; }
     for (const [c, ...a] of plan.uninstall) spawnSync(c, a, { encoding: 'utf8' });
@@ -73,8 +76,7 @@ const cmds = {
 
   async status() {
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir() });
-    const q = spawnSync(plan.query[0], plan.query.slice(1), { encoding: 'utf8' });
-    const registered = q.status === 0;
+    let registered; if (flags.pm2) { const ps = statusPm2({ script: SCRIPT }); registered = ps.registered; console.log(ps.line); } else { registered = spawnSync(plan.query[0], plan.query.slice(1), { encoding: 'utf8' }).status === 0; }
     const st = readStatus();
     const alive = !!st && Date.now() - st.beat < 45_000;
     if (flags.json) { console.log(JSON.stringify({ service_registered: registered, running: alive, ...st })); return; }
