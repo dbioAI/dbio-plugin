@@ -250,3 +250,58 @@ test('run-push #1050: 409 LEASE_STALE ⇒ kết thúc (bỏ, không thử lại)
   const p2 = createRunPusher({ dir: join(work, `push-${Math.random().toString(36).slice(2)}`), now: () => 1_000_000, call: async () => { throw new Error('HTTP 409 LEASE_STALE'); } });
   p2.enqueue('NV1', rec); assert.deepEqual(await p2.flush(), { sent: 0, dropped: 1, left: 0 });
 });
+
+// ===== #1060 ĐẠT: 20 ca kill/restart ⇒ 0 Run mồ côi, 0 attempt trùng, ≤3 tiến trình/máy =====
+test('#1060 20 ca kill/restart: run của tiến trình bị giết/mất ⇒ đóng lost trong 1 nhịp; restart nhận lại run còn pid; 0 mồ côi, 0 attempt trùng, slot ≤ max', async () => {
+  const { spawn } = await import('node:child_process');
+  const dir = join(work, 'kill20'); const store = createRunStore({ dir });
+  const kids = [];
+  const mk = (i, pid) => { const r = store.start({ staff: `S${i % 7}`, card: `1#${100 + i}`, adapter: 'claude-desktop', machine: 'M' }); store.update(r.run_id, { pid }); return r; };
+  const dead = []; const alive = [];
+  for (let i = 0; i < 20; i++) {
+    if (i % 2 === 0) { dead.push(mk(i, 2 ** 22 + 1000 + i)); } // tiến trình đã chết trước restart
+    else { const c = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' }); kids.push(c); alive.push(mk(i, c.pid)); }
+  }
+  const { config } = normalizeConfig({ staff: {}, defaults: { max_slots: 3 } });
+  const mkD = () => createDaemon({ loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, runs: createRunStore({ dir }) });
+  let d = mkD(); await d.start();
+  try {
+    // restart lần 1: 10 run pid chết ⇒ lost/process_gone; 10 run còn pid ⇒ nhận lại (lease_gen 2), vẫn mở
+    for (const r of dead) { const x = d.runs.list().find((q) => q.run_id === r.run_id); assert.equal(x.outcome, 'lost'); assert.equal(x.error_code, 'process_gone'); }
+    for (const r of alive) { const x = d.runs.get(r.run_id); assert.ok(x && !x.ended_at); assert.equal(x.lease_gen, 2); }
+    d.stop();
+    // giết 5 tiến trình rồi restart lần 2 ⇒ 5 run đó đóng lost; 5 còn lại nhận lại (lease_gen 3); không đóng nhầm
+    const killed = alive.slice(0, 5);
+    for (const c of kids.slice(0, 5)) c.kill('SIGKILL');
+    await until(() => killed.every((r) => !pidAlive(r.pid)));
+    d = mkD(); await d.start();
+    for (const r of killed) assert.equal(d.runs.list().find((q) => q.run_id === r.run_id).outcome, 'lost');
+    for (const r of alive.slice(5)) assert.equal(d.runs.get(r.run_id).lease_gen, 3);
+    // giết nốt, chạy 1 nhịp ⇒ không còn run mở có pid chết (0 mồ côi)
+    for (const c of kids.slice(5)) c.kill('SIGKILL');
+    await until(() => alive.every((r) => !pidAlive(r.pid)));
+    d.beatRuns();
+    assert.equal(d.runs.openRuns().filter((r) => !pidAlive(r.pid)).length, 0); assert.equal(d.runs.openRuns().length, 0);
+    // 0 attempt trùng: mỗi (nhân viên, thẻ) đúng một run, attempt = 1
+    const all = d.runs.list({ limit: 1000 }); const seen = new Set();
+    for (const r of all) { const k = `${r.staff}|${r.card}|${r.attempt}`; assert.ok(!seen.has(k), `attempt trùng ${k}`); seen.add(k); }
+    assert.equal(all.length, 20);
+    assert.ok(d.slotRuns().length <= 3);
+  } finally { d.stop(); for (const c of kids) { try { c.kill('SIGKILL'); } catch { /* đã chết */ } } }
+});
+
+test('#1060 (6) trạng thái NV tổng hợp từ attempt: working / waiting_owner (mọi lượt đã trả slot) / idle; thẻ phụ không ghi đè', async () => {
+  const dir = join(work, 'nvstate'); const store = createRunStore({ dir });
+  const a = store.start({ staff: 'N', card: '1#1', adapter: 'claude-desktop', machine: 'M' }); store.update(a.run_id, { pid: process.pid });
+  const b = store.start({ staff: 'N', card: '1#2', adapter: 'claude-desktop', machine: 'M' }); store.update(b.run_id, { pid: process.pid, slot_returned_at: 1 });
+  const { config } = normalizeConfig({ staff: { N: { adapter: 'command', command: ['node', '-e', '0'] } }, defaults: {} });
+  const d = createDaemon({ loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, runs: createRunStore({ dir }) });
+  await d.start();
+  try {
+    let st = d.staffStateOf("N"); assert.equal(st.state, 'working'); assert.equal(st.attempts.length, 2);
+    d.runs.update(a.run_id, { slot_returned_at: 2 });
+    st = d.staffStateOf("N"); assert.equal(st.state, "waiting_owner");
+    d.runs.end(a.run_id, { outcome: "ok" }); d.runs.end(b.run_id, { outcome: "ok" });
+    st = d.staffStateOf("N"); assert.equal(st.state, "idle");
+  } finally { d.stop(); }
+});
