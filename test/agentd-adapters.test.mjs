@@ -348,3 +348,10 @@ test('#1036 bestClaudeBin: chọn CLI MỚI NHẤT giữa app Desktop và PATH; 
   assert.equal(bestClaudeBin({ candidates: c, getVersion: () => '2.1.300' }).source, 'path');
   assert.equal(bestClaudeBin({ candidates: [], getVersion: () => null }), null);
 });
+
+test('#1036 runChild: Windows KHÔNG detached (claude.cmd chết mã 1 khi detached); nơi khác detached để tách nhóm tiến trình', async () => {
+  const s = fakeSpawn();
+  const r = runChild({ bin: 'node', args: ['-v'], spawnFn: s.fn, logName: 'detached-test' });
+  await r.running;
+  assert.equal(s.calls[0].opts.detached, process.platform !== 'win32');
+});
