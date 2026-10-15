@@ -17,7 +17,7 @@
  *                                       #744 KẸT có loại: work_state + staff_status + dòng KẸT cho người xem (server) · --clear = hết kẹt
  *   move <id> "<tên cột>"               chuyển cột
  *   new "<tiêu đề>" [--col "<cột>"] [--body "..."] [--labels a,b] [--prio 0-3] [--parent <thẻ cha>] [--area ..] [--sens ..] [--reason ..] [--requires '<json>']    tạo thẻ (mặc định cột Nhận; 1 cấp cha–con)
- *   set <id> [--area <mảng>] [--sens money|auth|normal|content] [--reason needs_owner|needs_review|needs_secret|engine_down|over_budget] [--requires '<json>']   (#1039) đặt trường thẻ; giá trị none = gỡ
+ *   set <id> [--area <mảng>] [--sens money|auth|normal|content] [--reason needs_owner|auth_required|quota_limited|dependency_missing|execution_failed|needs_review (cũ vẫn nhận: needs_secret|engine_down|over_budget)] [--requires '<json>']   (#1039) đặt trường thẻ; giá trị none = gỡ
  *                                       mảng: platform_money|ai_chat|studio|dash_web|internal_tools|verification · requires: {"capabilities":["chrome"],"resources":[{"id":"store-4","mode":"mutate"}]}
  *   propose "<tiêu đề>" [--body "..."] [--urgent]  KÊNH GÓP Ý (#828): thẻ "Góp ý: …" ở cột ĐANG TRAO ĐỔI, nhãn gop-y, bóng phía CHỦ; PM không thức.
  *                                       --urgent (lỗi nghiêm trọng đang ảnh hưởng thật) ⇒ thêm nhãn khan + @PM + @nhắc ⇒ PM thức.
@@ -96,12 +96,30 @@ function cardFieldFlags() {
   const out = {};
   const pick = (flag, key) => { if (flags[flag] === undefined) return; const v = String(flags[flag]).trim(); out[key] = (v === 'none' || v === '-' || v === '') ? null : v; };
   pick('area', 'area'); pick('sens', 'sensitivity'); pick('reason', 'blocked_reason');
+  const REASONS = ['needs_owner', 'auth_required', 'quota_limited', 'dependency_missing', 'execution_failed', 'needs_review', 'needs_secret', 'engine_down', 'over_budget'];
+  if (out.blocked_reason && !REASONS.includes(out.blocked_reason)) die(`--reason phải là ${REASONS.slice(0, 6).join('|')} (cũ: ${REASONS.slice(6).join('|')}) hoặc none`);
   if (flags.requires !== undefined) {
     const v = String(flags.requires).trim();
     if (v === 'none' || v === '-' || v === '') out.requires = null;
     else { try { out.requires = JSON.parse(v); } catch { die('--requires phải là JSON {"capabilities":[...],"resources":[{"id":"..","mode":"read|mutate|transact"}]}'); } }
   }
   return out;
+}
+/** #1050 (a): thẻ đang ở cột vai owner/review sau khi gỡ kẹt ⇒ kéo về cột TRƯỚC khi kẹt (task.moved cuối có to = cột hiện tại ⇒ from_column_id). Không suy ra được ⇒ để nguyên, nhắc. */
+const HOLD_COLUMNS = ['cần anh xử lý', 'chờ duyệt'];
+async function returnToPreHoldColumn(id) {
+  try {
+    const { col, columns } = await readCard(id);
+    if (!col || !HOLD_COLUMNS.includes(String(col.name).toLowerCase())) return '';
+    const since = new Date(Date.now() - 14 * 86400_000).toISOString();
+    const r = await tb('activity', { since, profile_id: BOARD, limit: 500 });
+    const moved = (r.items ?? []).filter((x) => Number(x.task_id) === id && x.action === 'task.moved' && Number(x.payload?.to_column_id) === Number(col.id) && Number(x.payload?.from_column_id) > 0);
+    const from = Number(moved[moved.length - 1]?.payload?.from_column_id);
+    const dest = columns.find((x) => Number(x.id) === from);
+    if (!dest || HOLD_COLUMNS.includes(String(dest.name).toLowerCase())) return ` · ⚠ thẻ còn ở "${col.name}" (không rõ cột trước khi kẹt) — dùng: dbio staff move ${id} "<cột>"`;
+    await tb('task_move', { task_id: id, column_id: dest.id });
+    return ` · thẻ về cột "${dest.name}"`;
+  } catch (e) { return ` · ⚠ chưa trả cột (${e?.message ?? e})`; }
 }
 function fmtSecs(s) { s = Math.max(0, Math.round(Number(s) || 0)); if (s >= 86400) return `${Math.floor(s / 86400)}n${Math.floor((s % 86400) / 3600)}g`; if (s >= 3600) return `${Math.floor(s / 3600)}g${Math.floor((s % 3600) / 60)}p`; return `${Math.floor(s / 60)}p`; }
 if (cmd === 'watch' && process.env.DBIO_AGENTD_TURN) die('[watch] chặn: đang trong lượt thức NGẦM của dbio-agentd (headless) — không bật watch nền (listener mồ côi nuốt tin). Xử lý xong thì kết thúc.', 4);
@@ -486,7 +504,8 @@ const cmds = {
       await tb('checkpoint', { task_id: id, work_state: keep });
       await ai('staff_status', { who: WHO, mode: 'set', state: 'working', task: ref(id), note: null });
       if (prev && typeof prev === 'object' && prev.blocked === 'owner') await tb('task_update', { task_id: id, blocked_reason: null }).catch(() => {}); // #1039
-      console.log(`ok #${id} hết kẹt · ${WHO} = working`);
+      const back = await returnToPreHoldColumn(id);
+      console.log(`ok #${id} hết kẹt · ${WHO} = working${back}`);
       return;
     }
     const kind = String(flags.kind ?? '');

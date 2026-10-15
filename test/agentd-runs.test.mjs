@@ -237,3 +237,16 @@ test('daemon #1036 (c): run mồ côi còn pid ⇒ nhân viên đó được coi
   await d.start();
   try { assert.ok(d.st.get('Z')?.inflight, 'inflight đặt cho nhân viên có run mồ côi còn sống'); } finally { d.stop(); }
 });
+
+test('run-push #1050: 409 LEASE_STALE ⇒ kết thúc (bỏ, không thử lại); lease_gen luôn gửi (mặc định 1)', async () => {
+  const { createRunPusher, runToRecord } = await import('../lib/agentd/run-push.mjs');
+  const dir = join(work, `push-${Math.random().toString(36).slice(2)}`); let n = 0;
+  const p = createRunPusher({ dir, now: () => 1_000_000, call: async () => { n++; const e = new Error('từ chối: LEASE_STALE: kết quả muộn [LEASE_STALE]'); e.code = 'LEASE_STALE'; throw e; } });
+  const rec = runToRecord({ run_id: 'r-stale', staff: 'NV1', card: '1#2', engine: 'claude', machine: 'M', started_at: 1_700_000_000_000 });
+  assert.equal(rec.args.usage.lease_gen, 1, 'bản cũ thiếu lease_gen ⇒ vẫn gửi 1');
+  p.enqueue('NV1', rec);
+  assert.deepEqual(await p.flush(), { sent: 0, dropped: 1, left: 0 }); assert.equal(n, 1);
+  // lỗi chỉ mang chữ LEASE_STALE trong message (không có code) cũng là kết thúc
+  const p2 = createRunPusher({ dir: join(work, `push-${Math.random().toString(36).slice(2)}`), now: () => 1_000_000, call: async () => { throw new Error('HTTP 409 LEASE_STALE'); } });
+  p2.enqueue('NV1', rec); assert.deepEqual(await p2.flush(), { sent: 0, dropped: 1, left: 0 });
+});
