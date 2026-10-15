@@ -95,7 +95,7 @@ test('claude-desktop: local_<uuid> ⇒ cliSessionId + cwd lấy từ tệp phiê
   assert.equal(resolveDesktopSession('local_hong', [root]), null);
   assert.equal(resolveDesktopSession('local_khong', [root]), null);
   const s = fakeSpawn();
-  const r = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_aaa', sessions_dir: root }, prompt: 'p', spawnFn: s.fn });
+  const r = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_aaa', sessions_dir: root, allow_large: true }, prompt: 'p', spawnFn: s.fn });
   assert.ok(r.ok); assert.deepEqual(s.calls[0].args, ['--resume', 'cli-111', '-p', '--output-format', 'json']); assert.equal(s.calls[0].opts.cwd, 'D:\\x');
   const miss = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_khong', sessions_dir: root }, prompt: 'p', spawnFn: s.fn });
   assert.equal(miss.ok, false); assert.match(miss.detail, /không thấy/); // #1022 spawn: mất tệp phiên mà không biết cwd ⇒ lỗi rõ
@@ -252,7 +252,7 @@ test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới
   // phiên ghim QUÁ NGƯỠNG ⇒ để yên, tạo phiên mới (không cầu dọn); allow_large ⇒ --resume như cũ
   const s6 = fakeSpawnSid('sp-555');
   const r6 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000 }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s6.fn });
-  assert.ok(r6.ok); assert.match(r6.detail, /quá ngưỡng: TỰ TẠO/); assert.ok(!s6.calls[0].args.includes('cli-heavy'));
+  assert.ok(r6.ok); assert.match(r6.detail, /không --resume phiên ghim .*TỰ TẠO/); assert.ok(!s6.calls[0].args.includes('cli-heavy'));
   const s7 = fakeSpawnSid('x');
   await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, allow_large: true }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s7.fn });
   assert.deepEqual(s7.calls[0].args.slice(0, 5), ['--resume', 'cli-heavy', '-p', '--output-format', 'json']);
