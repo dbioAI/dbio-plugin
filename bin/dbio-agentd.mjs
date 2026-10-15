@@ -44,7 +44,9 @@ const cmds = {
     const r = await d.start();
     if (!r.staff.length) console.error('[agentd] chưa có nhân viên nào để nghe — thêm vào cấu hình (' + configFile() + '), daemon vẫn chạy và tự nạp lại khi tệp đổi.');
     const bye = () => { d.stop(); d.writeStatus(); process.exit(0); };
-    process.on('SIGINT', bye); process.on('SIGTERM', bye);
+    // #1060 (3): SIGTERM (pm2 reload/stop) ⇒ DRAIN trước: không nhận lượt mới, chờ lượt đang chạy (tối đa drain_wait_s, mặc định 600s) rồi mới thoát; restart do supervisor NGOÀI lượt, cấm tự restart từ trong lượt
+    let byeOnce = false;
+    process.on('SIGINT', bye); process.on('SIGTERM', async () => { if (byeOnce) return; byeOnce = true; try { await d.drain(Number(process.env.DBIO_AGENTD_DRAIN_S ?? 600) * 1000); } catch { /* thoát dù lỗi */ } bye(); });
     // để lại dấu vết khi chết (#1036: 14/10 chết lặng, log không có dòng nào)
     const stamp = (m) => { try { process.stderr.write(`[agentd ${new Date().toISOString().slice(11, 19)}Z] ${m}\n`); } catch { /* bỏ */ } };
     process.on('uncaughtException', (e) => { stamp(`uncaughtException (bỏ qua, daemon vẫn chạy): ${e?.stack ?? e}`); });
