@@ -430,3 +430,21 @@ test('#1060 (a) claim TRƯỚC spawn: run_record 409 ATTEMPT_BUSY ⇒ KHÔNG spa
     } finally { d.stop(); await srv.stop(); }
   }
 });
+
+test('#1060 (5/5b) 2 tài khoản: Max 1 reserved chỉ khi Max 2 hoãn; env CLAUDE_CONFIG_DIR đúng; Run ghi đúng tài khoản; hoãn khi cả hai retry_at', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; const recs = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'claude-cli', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' }, accounts: [{ label: 'max1', config_dir: '/c1', reserved_for_owner: true }, { label: 'max2', config_dir: '/c2' }] });
+  assert.equal(config.accounts.length, 2);
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, account: (env) => `${env.CLAUDE_CONFIG_DIR}@x.com`,
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action === 'run_record') recs.push(a); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+    await waitFor(() => woken.length === 1, 8000);
+    assert.equal(woken[0].runEnv.CLAUDE_CONFIG_DIR, '/c2', 'ưu tiên Max 2'); assert.equal(recs[0].usage.account, '/c2');
+  } finally { d.stop(); await srv.stop(); }
+});
