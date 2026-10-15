@@ -217,3 +217,14 @@ test('daemon #1036 B: lượt chạy ⇒ run_record 2 lần (đang chạy rồi 
   assert.ok(!JSON.stringify(rec).includes('worker@dbio.ai'), 'không rò email');
   await until(() => d.pusher.pending() === 0);
 });
+
+test('daemon #1036 pha D: worker_beat gửi nhịp MÁY (máy, slot, trạng thái, tài khoản KHÔNG email, quota không gửi), thử khoá kế khi khoá đầu lỗi', async () => {
+  const calls = [];
+  const makeClient = (n) => ({ init: async () => 1, tb: async () => ({}), ai: async () => ({}), call: async (t, a) => { calls.push({ n, t, a }); if (n === 'A') { const e = new Error('401'); e.auth = true; throw e; } return {}; } });
+  const d = mkDaemon({ A: { adapter: 'command', command: [process.execPath, '-v'] }, B: { adapter: 'command', command: [process.execPath, '-v'] } }, {}, { makeClient });
+  await d.load(); await d.workerBeat();
+  assert.deepEqual(calls.map((c) => c.n), ['A', 'B']);
+  const b = calls[1]; assert.equal(b.t, 'ai_character'); assert.equal(b.a.action, 'worker_beat'); assert.equal(b.a.as, 'B');
+  assert.ok(b.a.beat.machine && b.a.beat.state === 'idle' && b.a.beat.used_slots === 0 && b.a.beat.max_slots >= 1);
+  assert.ok(b.a.beat.accounts.every((x) => x.quota_pct === undefined && !JSON.stringify(x).includes('@')), 'quota không đo ⇒ vắng, không email');
+});
