@@ -355,3 +355,11 @@ test('#1036 runChild: Windows KHÔNG detached (claude.cmd chết mã 1 khi detac
   await r.running;
   assert.equal(s.calls[0].opts.detached, process.platform !== 'win32');
 });
+
+test('runChild #1036 (d): đã in JSON kết quả mà tiến trình không thoát ⇒ sau ân hạn giết + coi XONG (Run luôn đóng)', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'res-')); const f = join(d, 'res.mjs');
+  writeFileSync(f, 'console.log(JSON.stringify({type:"result",is_error:false,usage:{}})); setTimeout(() => {}, 60000);');
+  const r = runChild({ bin: process.execPath, args: [f], input: '', timeoutS: 30, resultGraceS: 0.3 });
+  const t0 = Date.now(); const x = await r.running;
+  assert.ok(Date.now() - t0 < 5000); assert.equal(x.code, 0); assert.equal(x.forced, true); assert.equal(x.timedOut, false);
+});
