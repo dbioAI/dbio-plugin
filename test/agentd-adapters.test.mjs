@@ -249,6 +249,12 @@ test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới
   const r5 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_mat', cwd: 'D:\proj' }, prompt: 'p', events: [{ task: '162801#7' }], spawnFn: s5.fn });
   assert.ok(r5.ok); assert.match(r5.detail, /không còn trong ứng dụng/); assert.ok(s5.calls[0].stdin.startsWith('/staff nv1 162801#7'));
 
+  // #1045: NV theo manifest KHÔNG khai session (hoặc tệp local_*.json đã bị đổi tên/xoá) ⇒ vẫn thức bằng phiên tự tạo
+  const sN = fakeSpawnSid('sp-545');
+  const rN = await ad.wake({ staff: 'NV1', entry: { ...base, session: undefined, cwd: 'D:\proj' }, prompt: 'p', events: [{ task: '162801#9' }], spawnFn: sN.fn });
+  assert.ok(rN.ok); assert.ok(sN.calls[0].stdin.startsWith('/staff nv1 162801#9'));
+  assert.equal((await ad.wake({ staff: 'NV1', entry: { ...base, session: undefined, cwd: undefined }, prompt: 'p', events: [], spawnFn: sN.fn })).ok, false);
+
   // phiên ghim QUÁ NGƯỠNG ⇒ để yên, tạo phiên mới (không cầu dọn); allow_large ⇒ --resume như cũ
   const s6 = fakeSpawnSid('sp-555');
   const r6 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000 }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s6.fn });
