@@ -228,3 +228,12 @@ test('daemon #1036 pha D: worker_beat gửi nhịp MÁY (máy, slot, trạng th�
   assert.ok(b.a.beat.machine && b.a.beat.state === 'idle' && b.a.beat.used_slots === 0 && b.a.beat.max_slots >= 1);
   assert.ok(b.a.beat.accounts.every((x) => x.quota_pct === undefined && !JSON.stringify(x).includes('@')), 'quota không đo ⇒ vắng, không email');
 });
+
+test('daemon #1036 (c): run mồ côi còn pid ⇒ nhân viên đó được coi là ĐANG CHẠY (inflight) — không thức chồng sau restart', async () => {
+  const dir = join(work, 'orphan-inflight'); const store = createRunStore({ dir });
+  const live = store.start({ staff: 'Z', card: '1#9', adapter: 'claude-desktop', machine: 'M' }); store.update(live.run_id, { pid: process.pid });
+  const { config } = normalizeConfig({ staff: {}, defaults: {} });
+  const d = createDaemon({ loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, runs: createRunStore({ dir }) });
+  await d.start();
+  try { assert.ok(d.st.get('Z')?.inflight, 'inflight đặt cho nhân viên có run mồ côi còn sống'); } finally { d.stop(); }
+});
