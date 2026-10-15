@@ -448,3 +448,21 @@ test('#1060 (5/5b) 2 tài khoản: Max 1 reserved chỉ khi Max 2 hoãn; env CLA
     assert.equal(woken[0].runEnv.CLAUDE_CONFIG_DIR, '/c2', 'ưu tiên Max 2'); assert.equal(recs[0].usage.account, '/c2');
   } finally { d.stop(); await srv.stop(); }
 });
+
+test('#1060 H6-1: 2 tin cùng nhân viên tới liền nhau ⇒ chỉ MỘT lượt spawn (không chạy chồng)', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = [];
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action === 'run_record') await new Promise((r) => setTimeout(r, 300)); return {}; } }),
+    getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1);
+    srv.conns[0].send(evt(1, { task: '162801#9' })); srv.conns[0].send(evt(2, { task: '162801#9' }));
+    await new Promise((r) => setTimeout(r, 1200));
+    assert.equal(woken.length, 1, 'chỉ 1 lượt spawn');
+  } finally { d.stop(); await srv.stop(); }
+});
