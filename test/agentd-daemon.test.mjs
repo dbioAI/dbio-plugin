@@ -274,7 +274,7 @@ test('#1022 adapter tự tạo phiên (spawns) + phiên ghim TRỐNG ⇒ gọi a
     const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x', ...(mode ? { blank_mode: mode } : {}) } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' } });
     const d = createDaemon({
       loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-      makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+      makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'run_record') posted.push(a); return {}; } }),
       getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
       stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
     });
@@ -409,4 +409,24 @@ test('#872 Mac: thức LỖI xác thực (OAuth hết hạn) ⇒ báo KẸT lên
     assert.match(posted[0].body, /KẸT/); assert.match(posted[0].body, /ĐĂNG NHẬP/); assert.match(posted[0].body, /@TK TEST/); assert.equal(posted[0].task_id, 9);
     await new Promise((r) => setTimeout(r, 1500)); assert.equal(posted.length, 1, '1 lần / giờ');
   } finally { d.stop(); await srv.stop(); }
+});
+
+test('#1060 (a) claim TRƯỚC spawn: run_record 409 ATTEMPT_BUSY ⇒ KHÔNG spawn; claim ok ⇒ spawn có DBIO_RUN_ID/DBIO_LEASE_GEN', async () => {
+  for (const busy of [true, false]) {
+    const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+    const name = uniq(); const woken = []; const recs = [];
+    const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' } });
+    const d = createDaemon({
+      loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+      makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action === 'run_record') { recs.push(a); if (busy) { const e = new Error('ATTEMPT_BUSY'); e.code = 'ATTEMPT_BUSY'; throw e; } } return {}; } }),
+      getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
+      stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+    });
+    try {
+      await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+      await waitFor(() => recs.length >= 1, 8000);
+      if (busy) { await new Promise((r) => setTimeout(r, 300)); assert.equal(woken.length, 0, 'ATTEMPT_BUSY ⇒ không spawn'); }
+      else { await waitFor(() => woken.length === 1, 8000); assert.equal(woken[0].runEnv.DBIO_RUN_ID, recs[0].run_id); assert.equal(woken[0].runEnv.DBIO_LEASE_GEN, '1'); }
+    } finally { d.stop(); await srv.stop(); }
+  }
 });

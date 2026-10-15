@@ -14,6 +14,8 @@
  *   say <id> "<nội dung>"               bình luận lên thẻ
  *   stuck <id> --kind env|permission|tool|pm|owner|context "<vì sao>" [--need "<cần gì>"] | --clear
  *   stuck <id> --partial [--kind owner|permission] "<việc chủ cần làm>" [--need "<cần gì>"] | --partial --clear  (#818 chờ chủ MỘT PHẦN — thẻ ở lại Đang làm)
+ *   ask <thẻ> "<câu hỏi>" --opt "khoá|nhãn|tác động" (2–5 lần) [--data ..] [--default khoá] [--to owner|lead] [--hours N]   (#1060 câu hỏi chủ một lần; thẻ sang Cần anh)
+ *   return <thẻ> "<lý do ≥5>"   TRẢ LẠI thẻ Chờ duyệt → Đang làm (lead/người duyệt/chủ) · retract <thẻ> ["<lý do>"]   RÚT LẠI thẻ vừa nộp (≤120', chưa ai nhận duyệt)
  *                                       #744 KẸT có loại: work_state + staff_status + dòng KẸT cho người xem (server) · --clear = hết kẹt
  *   move <id> "<tên cột>"               chuyển cột
  *   new "<tiêu đề>" [--col "<cột>"] [--body "..."] [--labels a,b] [--prio 0-3] [--parent <thẻ cha>] [--area ..] [--sens ..] [--reason ..] [--requires '<json>']    tạo thẻ (mặc định cột Nhận; 1 cấp cha–con)
@@ -88,8 +90,8 @@ import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
-  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires'];
-const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out']);
+  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours'];
+const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out', '--opt']);
 const [cmd, ...rest] = pos;
 /** #1039: 4 trường thẻ từ cờ (none|- = gỡ). Server kiểm giá trị; ở đây chỉ gom. */
 function cardFieldFlags() {
@@ -163,6 +165,14 @@ async function otherDoingCards(id) {
 async function columnOf(id) {
   try { const t = (await tb('task_get', { task_id: id, comments: 0, body_max: 0, description_max: 0 })).task; if (t) return t.column?.name ?? null; } catch { /* rơi về đọc board */ }
   return (await readCard(id)).col?.name ?? null;
+}
+
+/** #1060 (d): lượt do agentd chạy có DBIO_RUN_ID + DBIO_LEASE_GEN ⇒ run_fence trước việc có hậu quả; 409 LEASE_STALE ⇒ lượt này đã bị thay thế, DỪNG (không retry). Không có env ⇒ phiên tay, bỏ qua. */
+async function fenceRun(id) {
+  const run_id = process.env.DBIO_RUN_ID; const lease_gen = Number(process.env.DBIO_LEASE_GEN);
+  if (!run_id || !Number.isInteger(lease_gen)) return;
+  try { await tb('run_fence', { task_id: id, run_id, lease_gen }); }
+  catch (e) { if (/LEASE_STALE|ATTEMPT_BUSY/.test(`${e?.code ?? ''} ${e?.message ?? ''}`)) die(`⛔ LEASE_STALE: lượt này (run ${run_id.slice(0, 8)}) đã bị thay thế — DỪNG, không ghi gì thêm lên thẻ.`, 3); throw e; }
 }
 
 const cmds = {
@@ -382,6 +392,7 @@ const cmds = {
     reason = { ...reason, deliverables };
     const seeLine = outLine(deliverables);
     const body = [...body0, ...(seeLine ? [`6. Xem: ${seeLine}`] : [])].join('\n');
+    await fenceRun(id); // #1060 (d): lượt agentd — kiểm lease TRƯỚC khi báo xong (409 LEASE_STALE ⇒ dừng)
     // Lý do duyệt TRƯỚC khi chuyển cột: chỉ người đang cầm thẻ ghi được; task PHẢI dạng đầy đủ <board>#<thẻ> (số trần ⇒ cổng khoá lead báo not_yours).
     let rnote;
     try { await ai('approval_reason', reasonArgs(BOARD, id, WHO, reason)); rnote = `lý do ${reason.level} ✓`; }
@@ -402,6 +413,37 @@ const cmds = {
     recordTouch(WHO, id);
     await ai('staff_status', { who: WHO, mode: 'set', state: 'idle', note: `xong #${id}` }).catch(() => {});
     console.log(`ok #${id} → ${moved} · ${rnote} · ${deliverables.length} sản phẩm${files.length ? ` (đã tải ${files.length} tệp lên kho)` : ""} · comment ${r.comment_id}`);
+  },
+
+  /** #1060 (d) CÂU HỎI CHỦ MỘT LẦN: ask <thẻ> "<câu ≤3 dòng>" --opt "khoá|nhãn|tác động" (2–5 lần) [--data "<cần dữ liệu gì>"] [--default <khoá>] [--to owner|lead] [--hours N]. Không tự áp default. */
+  async ask() {
+    const id = taskId(rest[0]); const text = rest.slice(1).join(' ').trim();
+    const optsRaw = [].concat(flags.opt ?? []).filter((x) => typeof x === 'string');
+    if (!text) die('Thiếu câu hỏi: dbio staff ask <thẻ> "<câu hỏi ≤3 dòng>" --opt "khoá|nhãn|tác động" --opt "…" (2–5 lựa chọn).');
+    if (optsRaw.length < 2 || optsRaw.length > 5) die('Cần 2–5 --opt "khoá|nhãn|tác động".');
+    const options = optsRaw.map((o) => { const [key, label, impact] = o.split('|').map((x) => x.trim()); if (!key || !label) die(`--opt sai dạng "khoá|nhãn|tác động": ${o}`); return { key, label, ...(impact ? { impact } : {}) }; });
+    const args = { task: taskRef(BOARD, id), text, options, as: WHO, assignee: flags.to ?? 'owner', ...(flags.data ? { data_needed: String(flags.data) } : {}), ...(flags.default ? { default: String(flags.default) } : {}), ...(flags.hours ? { expires_in_hours: Number(flags.hours) } : {}) };
+    if (flags.dry) { console.log(`[dry] question_ask ${JSON.stringify(args)}`); return; }
+    const r = await ai('question_ask', args);
+    recordTouch(WHO, id);
+    console.log(`ok ${taskRef(BOARD, id)} câu hỏi ${r?.id ?? r?.question?.id ?? ''} (${args.assignee}) — chờ trả lời, KHÔNG làm tiếp phần phụ thuộc; kết thúc lượt`);
+  },
+
+  /** #1060 (d) TRẢ LẠI thẻ đang Chờ duyệt (người duyệt/lead/chủ): return <thẻ> "<lý do ≥5 ký tự>". */
+  async return() {
+    const id = taskId(rest[0]); const reason = rest.slice(1).join(' ').trim();
+    if (reason.length < 5) die('Thiếu lý do (≥5 ký tự): dbio staff return <thẻ> "<vì sao trả lại>".');
+    if (flags.dry) { console.log(`[dry] card_return ${taskRef(BOARD, id)} ${reason}`); return; }
+    await ai('card_return', { task: taskRef(BOARD, id), reason, as: WHO }); recordTouch(WHO, id);
+    console.log(`ok ${taskRef(BOARD, id)} đã TRẢ LẠI → Đang làm: ${cut(reason, 80)}`);
+  },
+
+  /** #1060 (d) RÚT LẠI thẻ đã nộp (≤120' sau nộp, chưa ai nhận duyệt): retract <thẻ> ["<lý do>"]. */
+  async retract() {
+    const id = taskId(rest[0]); const reason = rest.slice(1).join(' ').trim();
+    if (flags.dry) { console.log(`[dry] card_retract ${taskRef(BOARD, id)} ${reason}`); return; }
+    await ai('card_retract', { task: taskRef(BOARD, id), ...(reason ? { reason } : {}), as: WHO }); recordTouch(WHO, id);
+    console.log(`ok ${taskRef(BOARD, id)} đã RÚT LẠI khỏi Chờ duyệt`);
   },
 
   async accept() {
