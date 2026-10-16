@@ -106,6 +106,18 @@ test('daemon: trần max_slots — lượt thứ 2 bị HOÃN (không tính th�
   await until(() => d.runs.list().filter((r) => r.ended_at).length === 2);
 });
 
+test('daemon #1060 (c): 4 wakeNow ĐỒNG THỜI (handoff chậm) với max_slots=3 ⇒ đúng 3 chạy, 1 HOÃN (giữ chỗ nguyên tử)', async () => {
+  const mkE = (n) => ({ adapter: 'command', command: [process.execPath, script(`par${n}`, { result: OK_RESULT, sleepMs: 1500 })] });
+  const makeClient = () => ({ init: async () => 1, tb: async () => ({}), ai: async () => ({}), call: async () => { await new Promise((r) => setTimeout(r, 150)); return {}; } });
+  const d = mkDaemon({ P1: mkE(1), P2: mkE(2), P3: mkE(3), P4: mkE(4) }, { max_slots: 3, spawn_grace_s: 0.1 }, { makeClient });
+  await d.load();
+  const ev = [{ kind: 'message', text: 'x', card: '162801#1060' }];
+  const res = await Promise.all(['P1', 'P2', 'P3', 'P4'].map((n) => d.wakeNow(n, 'a', ev)));
+  assert.equal(res.filter((r) => r.hold).length, 1, 'đúng 1 lượt bị HOÃN');
+  assert.ok(d.slotRuns().length <= 3);
+  await until(() => d.slotRuns().length === 0, 10000);
+});
+
 test('daemon: thẻ của run sang "Cần anh xử lý" ⇒ TRẢ slot (thẻ giữ nguyên người cầm); quay lại Đang làm ⇒ chiếm lại', async () => {
   const columns = [{ id: 1, name: 'Đang làm' }, { id: 2, name: 'Cần anh xử lý' }]; let col = 1;
   const makeClient = () => ({ init: async () => 162801, tb: async () => ({ data: { columns, tasks: [{ id: 1036, column_id: col }] } }), ai: async () => ({}), call: async () => ({}) });
