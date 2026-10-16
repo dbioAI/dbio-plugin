@@ -8,7 +8,7 @@
  *   uninstall [--dry]        gỡ dịch vụ (giữ cấu hình + log)
  *   status [--json]          dịch vụ có đang chạy? từng nhân viên: kết nối · số lần thức · lỗi cuối
  *   init [--force]           ghi agentd.json TỐI GIẢN (~/.dbio/agentd.json): nhân viên lấy từ máy chủ bằng khoá máy ~/.dbio/machine.key (#1075)
- *   migrate [--dry]          tệp cũ có staff khai tay ⇒ bỏ người đã có trong roster máy chủ (sao lưu .bak-pre1075), nâng cwd/args chung lên staff_defaults
+ *   migrate [--dry]          tệp cũ ⇒ THÊM staff_defaults (cwd/args chung) + discover.enabled; staff[] GIỮ NGUYÊN để daemon bản cũ vẫn chạy đủ cờ (sao lưu .bak-pre1075)
  *   roster [--json]          xem roster máy chủ cấp cho khoá máy này (không in khoá)
  *   wake <tên> [lời nhắc]    thử đánh thức một nhân viên qua adapter đã cấu hình (kiểm cấu hình mà không chờ việc thật)
  *   adapters                 danh sách adapter
@@ -133,7 +133,7 @@ const cmds = {
     if (!roster.staff.length) die('Roster máy chủ rỗng — giữ nguyên tệp cũ.', 1);
     const raw = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
     const m = migrateConfig(raw, roster.staff.map((s) => s.name));
-    console.log('roster ' + roster.staff.length + ' người · bỏ khai tay: ' + (m.dropped.join(', ') || '(không)') + ' · giữ ghi đè cục bộ: ' + (m.kept.join(', ') || '(không)'));
+    console.log('roster ' + roster.staff.length + ' người · chỉ thêm staff_defaults (staff[] GIỮ NGUYÊN, tương thích bản cũ) · ghi đè cục bộ: ' + (m.kept.join(', ') || '(không)'));
     if (flags.dry) { console.log(JSON.stringify(m.raw, null, 2)); return; }
     copyFileSync(f, f + '.bak-pre1075'); saveConfig(m.raw, f); console.log('ok đã ghi ' + f + ' (bản cũ: ' + f + '.bak-pre1075). Daemon tự nạp lại ở nhịp config_reload.');
   },

@@ -40,13 +40,15 @@ test('effectiveStaff: cục bộ > roster > staff_defaults; không adapter ⇒ c
   assert.equal(effectiveStaff(config, {}).NV1.adapter, 'claude-cli');
 });
 
-test('migrate: bỏ staff khai tay có trong roster, nâng cwd/args chung; roster rỗng ⇒ không đụng', () => {
-  const raw = { staff: { A: { adapter: 'claude-desktop', session: 'local_1', cwd: '/w', args: ['--p'] }, B: { adapter: 'claude-desktop', session: 'local_2', cwd: '/w', args: ['--p'] }, Z: { adapter: 'codex' } }, discover: { enabled: false } };
+test('migrate: TƯƠNG THÍCH NGƯỢC — staff[] giữ nguyên, chỉ thêm staff_defaults; bản N-1 (chỉ đọc staff[]) vẫn thấy adapter+args+cwd; roster rỗng ⇒ không đụng', () => {
+  const raw = { staff: { A: { adapter: 'claude-desktop', session: 'local_1', cwd: '/w', args: ['--permission-mode', 'bypassPermissions'] }, B: { adapter: 'claude-desktop', session: 'local_2', cwd: '/w', args: ['--permission-mode', 'bypassPermissions'] }, Z: { adapter: 'codex' } }, discover: { enabled: false } };
   const m = migrateConfig(raw, ['A', 'B']);
-  assert.deepEqual(m.dropped, ['A', 'B']); assert.deepEqual(Object.keys(m.raw.staff), ['Z']);
-  assert.deepEqual(m.raw.staff_defaults, { cwd: '/w', args: ['--p'] }); assert.equal(m.raw.discover.enabled, true);
+  assert.deepEqual(m.dropped, []); assert.deepEqual(Object.keys(m.raw.staff), ['A', 'B', 'Z']);
+  assert.deepEqual(m.raw.staff, raw.staff, 'staff[] không đổi một byte');
+  assert.deepEqual(m.raw.staff_defaults, { cwd: '/w', args: ['--permission-mode', 'bypassPermissions'] }); assert.equal(m.raw.discover.enabled, true);
+  // mô phỏng daemon N-1: chỉ đọc cfg.staff[] (không biết staff_defaults) ⇒ lượt spawn vẫn có bypass
+  for (const n of ['A', 'B']) assert.ok(m.raw.staff[n].args.includes('bypassPermissions') && m.raw.staff[n].adapter && m.raw.staff[n].cwd, n);
   assert.deepEqual(migrateConfig(raw, []).raw, raw);
-  assert.equal(migrateConfig({ staff: { A: { cwd: '/w' } } }, ['A']).raw.staff, undefined);
 });
 
 function harness({ roster, cache = null, fail = false, key = MK, keyDir = join(work, `keys-${Math.random().toString(36).slice(2)}`) }) {

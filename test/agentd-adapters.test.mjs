@@ -370,3 +370,27 @@ test('runChild #1036 (d): đã in JSON kết quả mà tiến trình không tho�
   const t0 = Date.now(); const x = await r.running;
   assert.ok(Date.now() - t0 < 5000); assert.equal(x.code, 0); assert.equal(x.forced, true); assert.equal(x.timedOut, false);
 });
+
+test('#1075 claude-cli: thiếu session + có cwd ⇒ phiên MỚI `claude -p --name` luôn có --permission-mode (bypass mặc định), trả pid + running (spawn giả pid sống ⇒ không lost)', async () => {
+  const ad = getAdapter('claude-cli'); const s = fakeSpawn();
+  const handoff = { text: 'PHIẾU', tokens: 5 };
+  const r = await ad.wake({ staff: 'NV1', entry: { cwd: '/w' }, prompt: 'việc', events: [{ task: '162801#1075' }], handoff, spawnFn: s.fn, workspace: false });
+  assert.ok(r.ok, r.detail); assert.equal(r.pid, 4242); assert.ok(r.running && typeof r.running.then === 'function'); assert.equal(r.spawnNew, true);
+  const a = s.calls[0].args;
+  assert.ok(!a.includes('--resume')); assert.deepEqual(a.slice(0, 1), ['-p']); assert.ok(a.includes('--name') && a[a.indexOf('--name') + 1] === 'NV1-1075');
+  assert.equal(a[a.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  assert.match(s.calls[0].stdin, /PHIẾU/);
+  // entry.args khai riêng ⇒ tôn trọng, không thêm bypass
+  const s2 = fakeSpawn(); await ad.wake({ staff: 'NV1', entry: { cwd: '/w', args: ['--permission-mode', 'acceptEdits'] }, prompt: 'x', spawnFn: s2.fn });
+  assert.deepEqual(s2.calls[0].args.filter((x) => /^(acceptEdits|bypassPermissions)$/.test(x)), ['acceptEdits']);
+  // --resume cũng luôn có cờ quyền
+  const s3 = fakeSpawn(); await ad.wake({ staff: 'NV1', entry: { session: 'abc-1', cwd: '/w' }, prompt: 'x', spawnFn: s3.fn });
+  assert.ok(s3.calls[0].args.includes('--permission-mode'));
+  // thiếu cả session lẫn cwd ⇒ lỗi rõ, không spawn
+  const s4 = fakeSpawn(); assert.equal((await ad.wake({ staff: 'NV1', entry: {}, prompt: 'x', spawnFn: s4.fn })).ok, false); assert.equal(s4.calls.length, 0);
+});
+
+test('#1075 withWorkspace giữ cờ spawns/spawnsFor của adapter (daemon đi đường claim/Run có pid)', () => {
+  const ad = getAdapter('claude-cli');
+  assert.equal(ad.spawns, true); assert.equal(typeof ad.spawnsFor, 'function'); assert.equal(ad.spawnsFor({ cwd: '/w' }), true); assert.equal(ad.spawnsFor({}), false);
+});
