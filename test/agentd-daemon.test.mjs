@@ -217,7 +217,7 @@ test('#872 đã CẦU rồi, phiên tự thức và làm: KHÔNG thức trùng �
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, now: () => clock,
     makeClient: () => ({
       ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }),
-      call: async (tool, a) => { posted.push(a); return {}; },
+      call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; },
     }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => blank, activeAgoMs: () => activeAgo, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
@@ -241,7 +241,7 @@ test('#872 đã cầu mà phiên KHÔNG nhúc nhích: giữ tin, không ack thay
   let clock = Date.now();
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, now: () => clock,
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -261,7 +261,7 @@ test('blank_mode: "headless" (opt-in) ⇒ vẫn gọi adapter (phiên ẩn), kh�
   const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x', blank_mode: 'headless' } }, defaults: { coalesce_ms: 0 } });
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -293,7 +293,7 @@ test('#1022 nhánh (4): tự tạo phiên HỎNG ≥ max_relays lần liên ti�
   const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, retry_s: 0.05, relay_to: 'PM giao việc', max_relays: 3 } });
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async () => { tries++; return { ok: false, detail: 'claude không chạy được' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -330,7 +330,7 @@ test('cầu cho phiên trống: trần 3 lần / thẻ (sổ trên đĩa), khôn
   const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, redeliver_after_min: 0, relay_card_min: 0, relay_to: 'TK TEST', max_relays: 2, retry_s: 0 } });
   const mkd = () => createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-    makeClient: () => ({ ai: async (t, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (t, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => true, wake: async () => ({ ok: true }) }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -355,7 +355,7 @@ test('#872 Qa: đã cầu cho thẻ A, phiên tự thức; tin của thẻ B KH�
   let blank = true; let activeAgo = null; let clock = Date.now();
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, now: () => clock,
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => blank, activeAgoMs: () => activeAgo, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -377,7 +377,7 @@ test('#872 Mac: phiên "đang hoạt động" mãi ⇒ hoãn CÓ LOG rồi tới
   let clock = Date.now();
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => false, activeAgoMs: () => 10_000, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
@@ -399,7 +399,7 @@ test('#872 Mac: thức LỖI xác thực (OAuth hết hạn) ⇒ báo KẸT lên
   const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'TK TEST', retry_s: 1 } });
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
-    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { posted.push(a); return {}; } }),
+    makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (t, a) => { if (a.action !== 'worker_beat') posted.push(a); return {}; } }),
     getAdapter: () => ({ name: 'fake-desktop', isBlank: () => false, activeAgoMs: () => null, wake: async () => ({ ok: false, detail: 'OAuth session expired — please run claude login' }) }),
     stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
   });
