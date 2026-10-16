@@ -1,6 +1,6 @@
 {
   "name": "dbio-plugin",
-  "version": "0.3.28",
+  "version": "0.3.29",
   "description": "Bộ nhẹ để nhân viên AI / phòng ban làm việc với dbio qua MCP: dbio-staff (sổ cái, canh tin, listen đẩy WebSocket, playbook) + daemon dbio-agentd nhận việc.",
   "type": "module",
   "engines": {

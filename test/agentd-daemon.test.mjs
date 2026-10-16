@@ -514,3 +514,19 @@ test('#1060 nối lượt kế: lượt xong ÊM + thẻ còn "Đang làm" có k
     } finally { d.stop(); await srv.stop(); }
   }
 });
+
+test('#1079 nối lượt kế: work_state.blocked=pm (đã stuck chờ PM) ⇒ KHÔNG nối lượt', async () => {
+  const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+  const name = uniq(); const woken = []; let n = 0;
+  const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc', chain_delay_s: 0, chain_max: 5 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+    makeClient: () => ({ init: async () => 162801, tb: async () => ({ task: { id: 9, column: { name: 'Đang làm' }, work_state: { at: `t${++n}`, next: 'bước kế', by: name, blocked: 'pm', waiting: 'chờ PM nâng pm2' }, comments: [] } }), ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async () => ({}) }),
+    getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok', pid: 0, running: Promise.resolve({ code: 0, out: '', stdout: '' }) }; } }),
+    stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+  });
+  try {
+    await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+    await waitFor(() => woken.length >= 1, 8000); await new Promise((r) => setTimeout(r, 800)); assert.equal(woken.length, 1, 'chờ PM ⇒ không nối');
+  } finally { d.stop(); await srv.stop(); }
+});
