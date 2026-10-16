@@ -69,18 +69,18 @@ test('splitSweep: wake/ask ⇒ nhắn phiên; còn lại ⇒ bình luận kèm @
   assert.deepEqual(splitSweep(null), { wakes: [], comments: [] });
 });
 
-test('normalizeConfig: bỏ nhân viên thiếu adapter, số sai về mặc định, sweep/discover thiếu "as" bị tắt', () => {
+test('normalizeConfig: số sai về mặc định, sweep thiếu "as" bị tắt; discover BẬT mặc định (#1075); adapter mặc định claude-cli', () => {
   const { config, errors } = normalizeConfig({
-    staff: { A: { adapter: 'codex' }, B: {}, C: 'x' }, defaults: { coalesce_ms: -1, adapter: null },
-    rules: { sweep: { enabled: true } }, discover: { enabled: true },
+    staff: { A: { adapter: 'codex' }, C: 'x' }, defaults: { coalesce_ms: -1 },
+    rules: { sweep: { enabled: true } },
   });
   assert.deepEqual(Object.keys(config.staff), ['A']);
   assert.equal(config.defaults.coalesce_ms, 3000);
   assert.equal(config.rules.sweep.enabled, false);
-  assert.equal(config.discover.enabled, false);
-  assert.ok(errors.length >= 5);
+  assert.equal(config.discover.enabled, true);
+  assert.equal(config.defaults.adapter, 'claude-cli');
+  assert.ok(errors.length >= 2);
   assert.deepEqual(normalizeConfig(null).config.staff, {});
-  assert.equal(normalizeConfig({ defaults: { adapter: 'claude-cli' }, staff: { Z: {} } }).config.staff.Z.adapter, 'claude-cli');
 });
 
 test('discoverFromStaffList: chỉ nhân viên runtime.machine = máy này + agent hiểu được', () => {

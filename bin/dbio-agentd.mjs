@@ -7,7 +7,9 @@
  *   install [--dry]          cài thành dịch vụ người dùng: launchd (macOS) · Task Scheduler (Windows) · systemd --user (Linux); tự chạy lại khi thoát
  *   uninstall [--dry]        gỡ dịch vụ (giữ cấu hình + log)
  *   status [--json]          dịch vụ có đang chạy? từng nhân viên: kết nối · số lần thức · lỗi cuối
- *   init [--force]           ghi tệp cấu hình mẫu (~/.dbio/agentd.json)
+ *   init [--force]           ghi agentd.json TỐI GIẢN (~/.dbio/agentd.json): nhân viên lấy từ máy chủ bằng khoá máy ~/.dbio/machine.key (#1075)
+ *   migrate [--dry]          tệp cũ có staff khai tay ⇒ bỏ người đã có trong roster máy chủ (sao lưu .bak-pre1075), nâng cwd/args chung lên staff_defaults
+ *   roster [--json]          xem roster máy chủ cấp cho khoá máy này (không in khoá)
  *   wake <tên> [lời nhắc]    thử đánh thức một nhân viên qua adapter đã cấu hình (kiểm cấu hình mà không chờ việc thật)
  *   adapters                 danh sách adapter
  *   runs [--month YYYY-MM] [--staff <tên>] [--limit N] [--json]   sổ Run do agentd ĐO (model thật, tài khoản, token vào/cache/ra từ CLI; thiếu ⇒ trống, không 0) + tỉ lệ run có usage thật
@@ -19,12 +21,13 @@
  * Mã thoát: 0 ok · 1 lỗi · 2 thiếu cấu hình/khoá.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { client, die, helpOf, parseArgs } from '../lib/common.mjs';
-import { SAMPLE, configFile } from '../lib/agentd/config.mjs';
+import { SAMPLE, configFile, migrateConfig, saveConfig } from '../lib/agentd/config.mjs';
+import { MACHINE_KEY_HELP, loadMachineKey, machineCall, machineKeyFile, mcpFromStaffKeys, normalizeRoster } from '../lib/agentd/roster.mjs';
 import { adapterNames } from '../lib/agentd/adapters/index.mjs';
 import { createDaemon, readStatus } from '../lib/agentd/daemon.mjs';
 import { acquireInstanceLock, releaseInstanceLock } from '../lib/agentd/instance-lock.mjs';
@@ -57,9 +60,9 @@ const cmds = {
     process.on('exit', () => releaseInstanceLock());
     const clients = new Map();
     const makeClient = (n) => { if (!clients.has(n)) clients.set(n, client(n, { throwAuth: true })); return clients.get(n); };
-    const d = createDaemon({ makeClient });
+    const d = createDaemon({ makeClient, forgetClient: (n) => clients.delete(n) });
     const r = await d.start();
-    if (!r.staff.length) console.error('[agentd] chưa có nhân viên nào để nghe — thêm vào cấu hình (' + configFile() + '), daemon vẫn chạy và tự nạp lại khi tệp đổi.');
+    if (!r.staff.length) console.error('[agentd] chưa có nhân viên nào để nghe — roster lấy từ máy chủ bằng khoá máy (' + machineKeyFile() + '); daemon vẫn chạy và tự dò lại mỗi nhịp.');
     const bye = () => { d.stop(); d.writeStatus(); process.exit(0); };
     // #1060 (3): SIGTERM (pm2 reload/stop) ⇒ DRAIN trước: không nhận lượt mới, chờ lượt đang chạy (tối đa drain_wait_s, mặc định 600s) rồi mới thoát; restart do supervisor NGOÀI lượt, cấm tự restart từ trong lượt
     let byeOnce = false;
@@ -77,7 +80,8 @@ const cmds = {
     if (flags.pm2) { const r = installPm2({ script: SCRIPT, flags, configFile }); if (!r.ok) die(`lỗi: ${r.error}`); return; }
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir(), env: { PATH: process.env.PATH, DBIO_AGENTD_CONFIG: process.env.DBIO_AGENTD_CONFIG } });
     if (flags.dry) { for (const f of plan.files) console.log(`# ghi ${f.path}\n${f.content}`); for (const c of plan.install) console.log(`$ ${c.join(' ')}`); return; }
-    if (!existsSync(configFile())) console.error(`[agentd] lưu ý: chưa có ${configFile()} — chạy \`dbio-agentd init\` rồi điền nhân viên.`);
+    if (!existsSync(configFile())) { saveConfig(SAMPLE); console.log('ok đã ghi ' + configFile() + ' tối giản (nhân viên lấy từ máy chủ).'); }
+    if (!loadMachineKey({ fallbackMcp: mcpFromStaffKeys() })) console.error('[agentd] 🔴 ' + MACHINE_KEY_HELP);
     mkdirSync(join(homedir(), '.dbio', 'agentd-logs'), { recursive: true });
     for (const f of plan.files) { mkdirSync(dirname(f.path), { recursive: true }); writeFileSync(f.path, f.content); }
     for (const [c, ...a] of plan.install) { const r = spawnSync(c, a, { encoding: 'utf8' }); if (r.status !== 0 && !/unload/.test(a[0] ?? '')) die(`lỗi: ${[c, ...a].join(' ')} → ${(r.stderr || r.stdout || r.error?.message || '').trim().slice(0, 200)}`); }
@@ -101,6 +105,7 @@ const cmds = {
     if (flags.json) { console.log(JSON.stringify({ service_registered: registered, running: alive, ...st })); return; }
     console.log(`dịch vụ: ${registered ? 'đã cài' : 'CHƯA cài'} · daemon: ${alive ? `ĐANG CHẠY (pid ${st.pid}, ${Math.round((Date.now() - st.started) / 60_000)} phút)` : 'KHÔNG chạy'}${st?.machine ? ` · máy ${st.machine}` : ''}`);
     for (const e of st?.config_errors ?? []) console.log(`⚠️ cấu hình: ${e}`);
+    if (st?.roster) console.log('  roster: ' + st.roster.count + ' người · nguồn ' + st.roster.source + (st.roster.revision != null ? ' · rev ' + st.roster.revision : '') + (st.roster.machine_key ? '' : ' · 🔴 chưa có khoá máy') + (st.roster.error ? ' · ⚠️ ' + st.roster.error : ''));
     if (alive && st?.slots) console.log(`  slot: ${st.slots.used}/${st.slots.max} đang dùng${(st.runs ?? []).length ? ` · run mở: ${st.runs.map((r) => `${r.staff}${r.card ? ` ${r.card}` : ''}${r.slot_returned ? ' (đã trả slot)' : ''}`).join(', ')}` : ''}`);
     for (const [n, s] of Object.entries(st?.staff ?? {})) console.log(`  ${n} · ${s.adapter}${s.discovered ? ' (tự dò)' : ''} · ${s.connected ? `nối ${s.transport}` : 'MẤT KẾT NỐI'} · thức ${s.wakes} lần${s.last_wake_at ? ` (cuối ${ageMin(s.last_wake_at)}p trước)` : ''}${s.queued ? ` · chờ ${s.queued}` : ''}${s.hold ? ` · ⏸ hoãn: ${s.hold}` : ''}${s.last_error ? ` · ⚠️ ${s.last_error}` : ''}`);
     if (!Object.keys(st?.staff ?? {}).length && alive) console.log('  (chưa có nhân viên nào — xem cấu hình)');
@@ -110,7 +115,27 @@ const cmds = {
     const f = configFile();
     if (existsSync(f) && !flags.force) die(`${f} đã có (dùng --force để ghi đè).`);
     mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, `${JSON.stringify(SAMPLE, null, 2)}\n`);
-    console.log(`ok đã ghi ${f} — điền tên nhân viên + adapter + session rồi \`dbio-agentd wake "<tên>"\` để thử.`);
+    console.log('ok đã ghi ' + f + ' (tối giản). Đặt khoá máy vào ' + machineKeyFile() + ' (một dòng) — nhân viên tự lấy từ máy chủ; kiểm: dbio-agentd roster');
+  },
+
+  async roster() {
+    const mk = loadMachineKey({ fallbackMcp: mcpFromStaffKeys() }); if (!mk) die('🔴 ' + MACHINE_KEY_HELP, 2);
+    const r = normalizeRoster(await machineCall(mk, 'ai_character', { action: 'machine_roster' }).then((x) => x.roster ?? x));
+    if (flags.json) { console.log(JSON.stringify(r)); return; }
+    console.log('máy ' + (r.machine_id ?? '?') + ' · revision ' + (r.revision ?? '?') + ' · ' + r.staff.length + ' nhân viên');
+    for (const s of r.staff) console.log('  ' + s.name + ' · ' + (s.agent ?? 'cli') + (s.enabled === false ? ' (tắt)' : '') + (s.model ? ' · ' + s.model : '') + (s.session_ref ? ' · có session_ref' : ''));
+  },
+
+  async migrate() {
+    const f = configFile(); if (!existsSync(f)) die(f + ' chưa có — chạy init.');
+    const mk = loadMachineKey({ fallbackMcp: mcpFromStaffKeys() }); if (!mk) die('🔴 ' + MACHINE_KEY_HELP + ' (migrate chỉ bỏ staff khai tay SAU KHI roster máy chủ khớp)', 2);
+    const roster = normalizeRoster(await machineCall(mk, 'ai_character', { action: 'machine_roster' }).then((x) => x.roster ?? x));
+    if (!roster.staff.length) die('Roster máy chủ rỗng — giữ nguyên tệp cũ.', 1);
+    const raw = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
+    const m = migrateConfig(raw, roster.staff.map((s) => s.name));
+    console.log('roster ' + roster.staff.length + ' người · bỏ khai tay: ' + (m.dropped.join(', ') || '(không)') + ' · giữ ghi đè cục bộ: ' + (m.kept.join(', ') || '(không)'));
+    if (flags.dry) { console.log(JSON.stringify(m.raw, null, 2)); return; }
+    copyFileSync(f, f + '.bak-pre1075'); saveConfig(m.raw, f); console.log('ok đã ghi ' + f + ' (bản cũ: ' + f + '.bak-pre1075). Daemon tự nạp lại ở nhịp config_reload.');
   },
 
   async wake() {

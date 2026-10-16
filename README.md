@@ -36,7 +36,7 @@ Chạy NỀN trong phiên (`run_in_background`): có tin cần làm ⇒ in (≤ 
 ### 2. Phiên đã nghỉ: daemon `dbio-agentd`
 
 ```
-dbio-agentd init              # ghi ~/.dbio/agentd.json mẫu, điền nhân viên + adapter + phiên
+dbio-agentd init              # ghi ~/.dbio/agentd.json tối giản (nhân viên tự lấy từ máy chủ qua ~/.dbio/machine.key)
 dbio-agentd wake "<tên>"      # thử đánh thức qua adapter (không chờ việc thật)
 dbio-agentd install           # dịch vụ người dùng: launchd · Task Scheduler · systemd --user (tự chạy lại)
 dbio-agentd status            # dịch vụ + từng nhân viên: nối WS/SSE, số lần thức, lỗi cuối
@@ -51,6 +51,13 @@ Mỗi nhân viên trên máy = MỘT kết nối bằng khoá riêng của nó. 
 | Phiên nghỉ | gọi adapter ngay (thường < 5s sau khi đẩy) |
 | Lượt trước còn chạy | không chồng; adapter lỗi ⇒ không ack, thử lại sau `retry_s` |
 | Quét sổ cái (`rules.sweep`, bật trên MỘT máy) | thẻ im > 1h ⇒ hỏi; > 2h / mất nhịp / 2 thẻ ⇒ ghi chú kèm `@<trưởng nhóm>` (tên trưởng nhóm tự lấy từ máy chủ — nhóm có sổ cái đó; `DBIO_PM_NAME` chỉ để ghi đè); chờ chủ không tính là im |
+
+**v0.3.23 (#1075) — nhân viên của máy lấy từ MÁY CHỦ, không khai tay.** agentd xác thực bằng **khoá MÁY** và hỏi `ai_character machine_roster` (+ nhận `roster`/`roster_revision` ngay trong phản hồi `worker_beat`; revision đổi ⇒ nạp lại tức thì). Mỗi 10' (`discover.every_min`) + mỗi nhịp máy.
+- **Khoá máy** (chủ đặt MỘT lần, lấy ở dash › Thêm máy): tệp `~/.dbio/machine.key` (MỘT dòng, quyền chỉ người dùng) hoặc biến `DBIO_MACHINE_KEY` (ghi đè). KHÔNG để trong `agentd.json`. Thiếu ⇒ log đỏ "chưa có khoá máy" + hướng dẫn trong `dbio-agentd status`, daemon KHÔNG chết (tự nạp ở nhịp dò kế). `mcp_url` lấy từ `DBIO_MCP_URL` › một khoá nhân viên có sẵn › `https://mcp.dbio.vn/mcp`.
+- **Roster = nguồn chuẩn.** `{machine_id, revision, staff:[{id,name,role,team_id,agent:cli|desktop,model,min_model,enabled,duty,session_ref?}]}`. Adapter mặc định **claude-cli** (headless); `claude-desktop` CHỈ khi `agent: desktop` VÀ có `session_ref`; `enabled:false` bị bỏ. Cache `~/.dbio/agentd-roster.json`: mất mạng / khởi động offline vẫn nghe đủ người cũ.
+- **Khoá nhân viên tự cấp/thu:** người mới thiếu `~/.dbio/staff-keys/<tên>.json` ⇒ `staff_key_issue` bằng khoá máy, ghi tệp (0600), KHÔNG in/log giá trị; người bị gỡ khỏi máy ⇒ ngừng nghe + xoá tệp khoá trong cùng nhịp.
+- **`agentd.json` tối giản:** `{"version":1,"staff_defaults":{"cwd":"…"},"discover":{"enabled":true},"defaults":{…},"accounts":[…]}`. `staff` chỉ còn GHI ĐÈ cục bộ (tuỳ chọn; thắng roster), `staff_defaults` áp cho mọi người từ roster (cwd/args/max_context_tokens). `dbio-agentd init`/`install` ghi bản tối giản; `discover.as` = đường lui cũ khi chưa có khoá máy.
+- Lệnh: `dbio-agentd roster` (xem roster máy chủ cấp cho khoá này) · `dbio-agentd migrate [--dry]` (tệp cũ ⇒ bỏ staff khai tay đã có trong roster, sao lưu `agentd.json.bak-pre1075`, nâng cwd/args chung lên `staff_defaults`) · `status` hiện dòng `roster: N người · nguồn server|cache · rev`.
 
 Cấu hình MỘT tệp (`~/.dbio/agentd.json`, `DBIO_AGENTD_CONFIG` đổi chỗ; daemon tự nạp lại khi tệp đổi):
 
