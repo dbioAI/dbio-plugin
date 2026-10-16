@@ -70,3 +70,23 @@ test('cờ tắt + tham số CLI + parse kết quả stream-json', () => {
   const out = [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }), tu('1', 'Bash', { command: 'ls' }), JSON.stringify({ type: 'result', is_error: false, session_id: 's1', num_turns: 2, modelUsage: { m: { inputTokens: 5, outputTokens: 7, cacheReadInputTokens: 9, cacheCreationInputTokens: 1, costUSD: 0.1 } } })].join('\n');
   const u = parseRunOutput(out); assert.equal(u.session_id, 's1'); assert.equal(u.tokens.output, 7); assert.equal(u.is_error, false);
 });
+
+test('createRunLog (#1076 trả lại): lượt giả 10 bước ⇒ máy chủ giả có đủ 10, đẩy sau lỗi không mất, lô ≤100, tóm tắt đẩy n/nhận n', async () => {
+  const server = new Map(); const logs = []; let calls = 0; let down = 0; // khử lặp theo seq như máy chủ thật
+  const send = async (b) => { calls++; if (b.length > 100) throw new Error('BATCH_TOO_BIG'); if (down > 0) { down--; const e = new Error('lỗi mạng'); e.code = 'ECONNRESET'; throw e; } let accepted = 0, dropped = 0; for (const e of b) { if (server.has(e.seq)) dropped++; else { server.set(e.seq, e); accepted++; } } return { accepted, dropped }; };
+  let tick = null;
+  const rl = createRunLog({ runId: 'r10', setTimer: (f) => { tick = f; return {}; }, clearTimer() {}, send, onLog: (m) => logs.push(m), sleep: async () => {} });
+  for (let i = 0; i < 6; i++) rl.feedLine(tu(String(i), 'Bash', { command: `echo ${i}` }));
+  await tick(); assert.equal(server.size, 6);
+  down = 1; for (let i = 6; i < 10; i++) rl.feedLine(tu(String(i), 'Bash', { command: `echo ${i}` }));
+  await tick(); assert.equal(server.size, 6); assert.ok(logs.some((l) => /LỖI ECONNRESET/.test(l)));
+  const s = await rl.end(); assert.equal(server.size, 10); assert.deepEqual([...server.keys()], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.match(s, /đẩy 10\/10 · máy chủ nhận 10/);
+  // 250 bước dồn một lô ⇒ tách ≤100
+  const rl2 = createRunLog({ runId: 'r250', maxEvents: 500, setTimer: () => ({}), clearTimer() {}, send, sleep: async () => {} });
+  for (let i = 0; i < 250; i++) rl2.feedLine(tu(`x${i}`, 'Bash', { command: `echo ${i}` }));
+  server.clear(); await rl2.end(); assert.equal(server.size, 250);
+  // đẩy lỗi mãi ⇒ tóm tắt nói rõ CHƯA đẩy + mã lỗi
+  down = 99; const rl3 = createRunLog({ runId: 'r3', setTimer: () => ({}), clearTimer() {}, send, sleep: async () => {}, endTries: 2 });
+  rl3.feedLine(tu('a', 'Bash', { command: 'ls' })); assert.match(await rl3.end(), /CHƯA đẩy 1 \(ECONNRESET\)/);
+});
