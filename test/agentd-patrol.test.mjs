@@ -56,3 +56,48 @@ test('lịch: patrol 5\' có mặc định, tắt được', () => {
   assert.equal(resolveSchedule({}).cron.patrol, '0 */5 * * * *');
   assert.equal(resolveSchedule({ schedule: { patrol: false } }).cron.patrol, false);
 });
+
+// ── tích hợp daemon.patrol với deps giả (#1079) ──
+import { createDaemon } from '../lib/agentd/daemon.mjs';
+import { normalizeConfig } from '../lib/agentd/config.mjs';
+
+const mkPatrolDaemon = ({ tasks, failTb = false }) => {
+  const logs = []; const woken = []; let clock = Date.parse('2026-10-17T10:00:00Z'); let tbCalls = 0;
+  const { config } = normalizeConfig({ staff: { PT1: { adapter: 'fake-spawn' } }, defaults: { coalesce_ms: 0 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
+    makeClient: () => ({ init: async () => '77', tb: async () => { tbCalls++; if (failTb) throw new Error('fetch failed'); return { data: { tasks, columns: [{ id: 1, name: 'Đã giao' }, { id: 2, name: 'Đang làm' }] } }; }, ai: async () => ({ items: [] }), call: async () => ({}) }),
+    getAdapter: () => ({ name: 'fake-spawn', spawns: true, isBlank: () => false, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
+    stream: () => ({ state: { connected: true, channel: 'open' }, queue: [], done: new Promise(() => {}), stop() {} }),
+  });
+  return { d, logs, woken, tick: (ms) => { clock += ms; }, tbCalls: () => tbCalls };
+};
+
+test('#1079 patrol: lỗi mạng ⇒ log đỏ + backoff (không quét lại trong hạn)', async () => {
+  const h = mkPatrolDaemon({ tasks: [], failTb: true });
+  await h.d.start(); await h.d.patrol(); await h.d.patrol();
+  assert.equal(h.tbCalls(), 1, 'trong hạn backoff không gọi lại');
+  assert.ok(h.logs.some((l) => /tuần tra lỗi \(lần 1\).*30s/.test(l)));
+  h.tick(31_000); await h.d.patrol();
+  assert.equal(h.tbCalls(), 2); assert.ok(h.logs.some((l) => /lần 2.*60s/.test(l)));
+  h.d.stop();
+});
+
+const ago = (m) => new Date(Date.parse('2026-10-17T10:00:00Z') - m * 60_000).toISOString();
+const pt = (id, col, m) => ({ id, column_id: col, title: 't', priority: 'normal', labels: ['@PT1'], entered_column_at: ago(m) });
+
+test('#1079 patrol: Đã giao >10\' không Run ⇒ tự mở lượt (claim); <10\' thì chưa', async () => {
+  const young = mkPatrolDaemon({ tasks: [pt(5, 1, 4)] });
+  await young.d.start(); await young.d.patrol(); await new Promise((r) => setTimeout(r, 50));
+  assert.equal(young.woken.length, 0); young.d.stop();
+  const h = mkPatrolDaemon({ tasks: [pt(6, 1, 15)] });
+  await h.d.start(); await h.d.patrol();
+  assert.equal(h.woken.length, 1); assert.match(h.woken[0], /77#6/); assert.match(h.woken[0], /chưa ai nhận/);
+  await h.d.patrol(); assert.equal(h.woken.length, 1, 'không mở trùng trong 10\''); h.d.stop();
+});
+
+test('#1079 patrol: Đang làm không Run ⇒ tiếp quản (rescue)', async () => {
+  const h = mkPatrolDaemon({ tasks: [pt(9, 2, 70)] });
+  await h.d.start(); await h.d.patrol();
+  assert.equal(h.woken.length, 1); assert.match(h.woken[0], /77#9/); assert.match(h.woken[0], /không phiên nào làm/); h.d.stop();
+});
