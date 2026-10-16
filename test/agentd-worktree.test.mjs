@@ -39,7 +39,7 @@ function mergeProc(card, repoName) {
 test('#1062 ĐẠT-1: 10 cặp thẻ sửa CÙNG tệp, gộp ĐỒNG THỜI (2 tiến trình) ⇒ 0 mất sửa âm thầm', { timeout: 240_000 }, async () => {
   const repo = makeRepo('proj');
   let silent = 0; let merged = 0; let conflicts = 0;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < Number(process.env.T1062_PAIRS ?? 10); i++) {
     const A = `9#${100 + 2 * i}`; const B = `9#${101 + 2 * i}`;
     const wa = prepareWorktree({ repo, card: A }); const wb = prepareWorktree({ repo, card: B });
     assert.ok(wa.ok && wb.ok && wa.created && wb.created);
