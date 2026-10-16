@@ -26,7 +26,7 @@ const task = (over = {}) => ({ id: 7, title: 'Việc thử', priority: 2, column
 test('buildHandoff: work_state + 3 bình luận cuối (bỏ dòng agentd), ≤ 1.500 token ngay cả khi thẻ rất dài', () => {
   const h = buildHandoff(task(), { card: '162801#7' });
   assert.match(h.text, /Thẻ 162801#7 Việc thử/); assert.match(h.text, /kế tiếp: làm bước B/); assert.match(h.text, /head abcdef1/);
-  assert.ok(!h.text.includes('dbio-agentd')); assert.ok(!h.text.includes('một') && h.text.includes('hai') && h.text.includes('ba') && h.text.includes('bốn'), '3 bình luận cuối còn lại');
+  assert.ok(!h.text.includes('dbio-agentd')); assert.ok(h.text.includes('một') && h.text.includes('hai') && h.text.includes('ba') && h.text.includes('bốn'), 'mọi bình luận người thật kể từ hồ sơ (#1060 4)');
   assert.equal(h.ws_at, '2026-10-15 08:00:00');
   const big = buildHandoff(task({ description: 'x'.repeat(50_000), comments: Array.from({ length: 5 }, (_, i) => ({ at: i, by: 'a', body: 'y'.repeat(9000) })) }));
   assert.ok(big.tokens <= HANDOFF_MAX_TOKENS && estTokens(big.text) <= HANDOFF_MAX_TOKENS);
@@ -121,4 +121,18 @@ test('daemon: lượt xong êm nhưng thẻ KHÔNG có work_state mới ⇒ Run 
       assert.equal(r.outcome, want); assert.equal(r.resumed, false); assert.ok(r.handoff_tokens > 0);
     } finally { d.stop(); await srv.stop(); }
   }
+});
+
+test('#1060 (4): 1 lệnh PM rồi 4 dòng agentd/Máy chủ ⇒ phiếu VẪN chứa lệnh PM; bình luận cũ trước hồ sơ chỉ bù cho đủ 3', () => {
+  const ws = { at: '2026-10-16 05:29:50', by: 'NV1', next: 'chờ' };
+  const sys = (i) => ({ at: `2026-10-16 09:${10 + i}:00`, by: 'NV1', body: '▶️ dbio-agentd: lượt ngầm BẮT ĐẦU' });
+  const cm = [{ at: '2026-10-16 08:45:43', by: 'Máy chủ', body: '⛔ Không có lượt (Run) nào >2h' }, { at: '2026-10-16 09:00:00', by: 'PM giao việc', body: 'LỆNH-PM làm ngay đừng chờ 24h' }, sys(1), sys(2), sys(3), sys(4)];
+  const h = buildHandoff({ id: 9, title: 'T', column: { name: 'Đang làm' }, work_state: ws, comments: cm }, { card: '1#9', name: 'NV1' });
+  assert.match(h.text, /LỆNH-PM làm ngay/); assert.ok(!h.text.includes('dbio-agentd') && !h.text.includes('Không có lượt'));
+  const old = buildHandoff({ id: 9, title: 'T', column: { name: 'Đang làm' }, work_state: ws, comments: [{ at: '2026-10-15 01:00:00', by: 'PM', body: 'cũ-1' }, { at: '2026-10-15 02:00:00', by: 'PM', body: 'cũ-2' }, { at: '2026-10-15 03:00:00', by: 'PM', body: 'cũ-3' }, { at: '2026-10-15 04:00:00', by: 'PM', body: 'cũ-4' }] }, { name: 'NV1' });
+  assert.ok(!old.text.includes('cũ-1') && old.text.includes('cũ-2') && old.text.includes('cũ-4'), 'không có gì mới ⇒ 3 bình luận người thật cuối');
+  const own = buildHandoff({ id: 9, title: 'T', column: { name: 'x' }, work_state: ws, comments: [{ at: '2026-10-16 06:00:00', by: 'NV1', body: 'tự ghi chú' }, { at: '2026-10-16 07:00:00', by: 'NV2', body: 'ping @NV1 giúp' }] }, { name: 'NV1' });
+  assert.match(own.text, /ping @NV1 giúp/);
+  const big = buildHandoff({ id: 9, title: 'T', description: 'x'.repeat(40_000), column: { name: 'x' }, work_state: ws, comments: Array.from({ length: 12 }, (_, i) => ({ at: `2026-10-16 10:${10 + i}:00`, by: 'PM', body: `lệnh${i} ` + 'y'.repeat(2000) })) }, { name: 'NV1' });
+  assert.ok(big.tokens <= HANDOFF_MAX_TOKENS && big.text.includes('lệnh11'), 'tràn ngân sách ⇒ cắt phần đầu, giữ lệnh mới nhất');
 });

@@ -31,7 +31,8 @@ import { acquireInstanceLock, releaseInstanceLock } from '../lib/agentd/instance
 import { installPlan } from '../lib/agentd/service.mjs';
 import { ageMin } from '../lib/agentd/rules.mjs';
 import { installPm2, statusPm2, uninstallPm2 } from '../lib/agentd/pm2-cli.mjs';
-import { createRunStore, summarize } from '../lib/agentd/runs.mjs';
+import { createRunStore, pidAlive, summarize } from '../lib/agentd/runs.mjs';
+import { evictSameScript } from '../lib/agentd/procs.mjs';
 import { createLeases, RESOURCES } from '../lib/agentd/lease.mjs';
 import { mergeCard, prepareWorktree, resolveRepo } from '../lib/agentd/worktree.mjs';
 
@@ -44,6 +45,11 @@ const cmds = {
   async run() {
     // #1060 (c): một daemon / máy — bản thứ hai ĐỨNG CHỜ (không thoát để wrapper/pm2 không quay vòng), nhận việc khi bản kia chết
     let lk = acquireInstanceLock({ statusRead: readStatus }); let warned = 0;
+    if (!lk.ok && process.env.DBIO_AGENTD_NO_EVICT !== '1') { // #1060 (2): daemon cũ CÙNG script ⇒ giết (thay vì chờ, 16/10 mất 2h không có lượt); script khác ⇒ vẫn chờ
+      const ev = await evictSameScript({ script: SCRIPT, alive: pidAlive }).catch(() => ({ killed: [], stuck: [] }));
+      if (ev.killed.length) console.error(`[agentd] đã dừng daemon cũ cùng script (pid ${ev.killed.join(',')})${ev.stuck.length ? ` — còn kẹt ${ev.stuck.join(',')}` : ''}.`);
+      lk = acquireInstanceLock({ statusRead: readStatus });
+    }
     while (!lk.ok) {
       if (Date.now() - warned > 300_000) { warned = Date.now(); console.error(`[agentd] đã có daemon khác đang chạy (pid ${lk.owner}) — bản này đứng chờ, KHÔNG nhận việc (tránh 2 Run / 1 @mention).`); }
       await new Promise((r) => setTimeout(r, 10_000)); lk = acquireInstanceLock({ statusRead: readStatus });

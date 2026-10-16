@@ -27,3 +27,12 @@ test('pm2Plan Mac/Linux: gỡ dịch vụ kiểu cũ trước', () => {
   assert.match(pm2Plan({ platform: 'darwin', ...base }).steps[0].cmd.join(' '), /launchctl unload/);
   assert.match(pm2Plan({ platform: 'linux', ...base }).steps[0].cmd.join(' '), /systemctl --user disable/);
 });
+
+test('#1060 (1) pm2Plan Windows: gỡ cả tác vụ KHÁC TÊN chạy launcher cũ + xoá tệp launcher, trước pm2 start; không đụng tác vụ resurrect', () => {
+  const p = pm2Plan({ platform: 'win32', ...base, home: 'C:/h' });
+  const i = p.steps.findIndex((s) => /dbio-agentd-run/.test(s.cmd.join(' ')) && /Get-ScheduledTask/.test(s.cmd.join(' ')));
+  assert.ok(i >= 0 && i < p.steps.findIndex((s) => /pm2 start/.test(s.cmd.join(' '))));
+  const c = p.steps[i].cmd.join(' ');
+  assert.match(c, /Remove-Item -LiteralPath '[^']*dbio-agentd-run\.ps1' -Force/); assert.match(c, /-ne 'dbio-agentd-resurrect'/);
+  assert.equal(p.steps[i].optional, true);
+});
