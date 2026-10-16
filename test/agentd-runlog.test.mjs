@@ -54,7 +54,7 @@ test('createRunLog: lô theo nhịp, thử lại khi lỗi, trần sự kiện, 
   for (let i = 0; i < 5; i++) rl.feedLine(tu(String(i), 'Bash', { command: `echo ${i}` }));
   await tick(); assert.equal(sent.length, 0); fail = false;
   await tick(); assert.equal(sent.length, 4); // 3 bước + 1 dòng trần
-  assert.ok(sent.every((e) => e.run_id === 'r1' && typeof e.at === 'number'));
+  assert.ok(sent.every((e) => e.run_id === 'r1' && typeof e.at === 'string' && Number.isInteger(e.seq)));
   assert.match(sent[3].text, /trần 3/);
   const s = await rl.end(); assert.match(s, /5 lệnh/);
 });
