@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_TEMPLATE, buildPrompt, buildRelayMessage, decideWake, listenerAlive, splitSweep } from '../lib/agentd/rules.mjs';

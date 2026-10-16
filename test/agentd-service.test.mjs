@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LAUNCHD_LABEL, SERVICE_NAME, installPlan } from '../lib/agentd/service.mjs';

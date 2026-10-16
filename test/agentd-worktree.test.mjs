@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 // #1062 G2 — bảo toàn mã: worktree theo thẻ + gộp tuần tự + lease repo + canh lượt dài. Repo git THẬT trong thư mục tạm (origin trần + bản chính).
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ackStale, fetchFreshItems } from '../lib/watch-fetch.mjs';

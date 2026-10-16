@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { claudeNamed, evictSameScript, reconcileProcs, sameScriptDaemons } from '../lib/agentd/procs.mjs';

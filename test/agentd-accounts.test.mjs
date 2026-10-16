@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeAccounts, pickAccount } from '../lib/agentd/accounts.mjs';

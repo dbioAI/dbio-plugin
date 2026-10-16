@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NORMAL_BATCH, NORMAL_MAX_AGE_MS, classify, filterInbox, formatItem, isSelf, parseAssignSignature, parseAt, pickBatch, shouldWake, summarizeLog, taskIdOf, touch } from '../lib/watch-filter.mjs';

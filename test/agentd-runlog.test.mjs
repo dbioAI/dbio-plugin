@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyCommand, createExtractor, createRunLog, redact, runEventsEnabled } from '../lib/agentd/runlog.mjs';

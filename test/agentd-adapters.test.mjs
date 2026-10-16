@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { EventEmitter } from 'node:events';

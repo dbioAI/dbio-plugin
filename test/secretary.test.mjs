@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { HOUR_MS, formatAction, formatNext, holderOf, lastActivity, markNudged, needsCommentCheck, pickNext, planSweep } from '../lib/secretary.mjs';

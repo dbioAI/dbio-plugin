@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readSessionMeta, sessionBaseCandidates, sessionsRoot } from '../lib/sessions-dir.mjs';

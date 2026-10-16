@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { bodyFromText, getPlaybook, pickSections, probeAiPlaybook, reasonOf, renderLocal } from '../lib/playbook-get.mjs';

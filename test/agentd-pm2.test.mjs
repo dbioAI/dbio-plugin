@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pm2Plan, PM2_NAME } from '../lib/agentd/service.mjs';

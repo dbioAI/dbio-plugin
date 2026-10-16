@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { backoffMs, closePolicy, dedupe, eventToItem, httpPolicy, isSystemFrame, parseFrame, sseParser, streamUrls } from '../lib/stream/protocol.mjs';

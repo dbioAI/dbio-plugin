@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyFailure } from '../lib/agentd/failure.mjs';

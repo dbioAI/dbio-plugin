@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,6 +57,7 @@ function harness({ roster, cache = null, fail = false, key = MK, keyDir = join(w
     loadCfg: () => ({ config, errors: [] }), log: process.env.TLOG ? console.log : () => {}, keyDir, machine: 'M',
     makeClient: () => ({ ai: async () => ({}), call: async () => ({}), init: async () => 1, tb: async () => ({}) }),
     stream: (o) => ({ state: { connected: true }, queue: [], done: new Promise(() => {}), stop: () => { started.push(`stop:${o.name}`); } }),
+    getAdapter: (a) => ({ name: a, wake: async () => ({ ok: true, detail: 'adapter giả (hermetic)' }) }),
     loadMachineKey: () => key, forgetClient: (n) => forgot.push(n),
     rosterCache: { read: () => cached, write: (r) => { cached = r; } },
     machineCall: async (_mk, _tool, args) => {

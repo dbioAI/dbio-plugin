@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 /**
  * Chạy THẬT `dbio staff watch` với máy chủ MCP giả (HTTP cục bộ) + thư mục HOME tạm ⇒ kiểm toàn bộ vòng lặp: --fresh, bản sao, direct_count,
  * 60 chưa đọc + 1 tin mới (REGRESSION regression-1), nhịp alive.json.

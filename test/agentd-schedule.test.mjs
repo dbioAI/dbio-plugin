@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createScheduler, resolveSchedule, everyMinCron, DEFAULT_SCHEDULE } from '../lib/agentd/schedule.mjs';

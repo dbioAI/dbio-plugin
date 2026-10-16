@@ -1,3 +1,4 @@
+import './helpers/hermetic.mjs';
 /**
  * #965 ƯU TIÊN 1 (chủ chốt 9/10): phiên QUÁ NGƯỠNG tự dọn — cầu thư ký clear bằng lệnh cố định; phiên trống ⇒ cầu nạp vai.
  * Lượt thức ngầm (`claude -p`) KHÔNG có clear_session/set_remote_control của ứng dụng (đo 9/10) ⇒ lệnh dọn phải đi qua thư ký (send_message vào phiên ghim).
