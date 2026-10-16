@@ -12,6 +12,7 @@
  *                                       tự thu git (worktree, nhánh, sha, đã push?, file dở) ⇒ ghi HỒ SƠ LÀM VIỆC lên thẻ
  *   takeover <id> [--dir <worktree>]    phiên kế nhận việc: in hồ sơ + ĐỐI CHIẾU với git cục bộ; lệch ⇒ thoát 3 (báo PM)
  *   say <id> "<nội dung>"               bình luận lên thẻ
+ *   runlog <id> [--after <id>] [--limit 50] [--kind cmd|edit|test|build|deploy|mcp|wait|note] [--run <run_id>]   (#1076) nhật ký lượt: bước nhân viên đang làm (task_board run_events)
  *   stuck <id> --kind env|permission|tool|pm|owner|context "<vì sao>" [--need "<cần gì>"] | --clear
  *   stuck <id> --partial [--kind owner|permission] "<việc chủ cần làm>" [--need "<cần gì>"] | --partial --clear  (#818 chờ chủ MỘT PHẦN — thẻ ở lại Đang làm)
  *   ask <thẻ> "<câu hỏi>" --opt "khoá|nhãn|tác động" (2–5 lần) [--data ..] [--default khoá] [--to owner|lead] [--hours N]   (#1060 câu hỏi chủ một lần; thẻ sang Cần anh)
@@ -243,6 +244,19 @@ const cmds = {
       ws = ' · work_state ✓';
     } catch { /* server cũ */ }
     console.log(`ok #${id} hồ sơ ${g?.head ?? '-'}${g && !g.onRemote.length ? ' (CHƯA push)' : ''}${g?.dirty.length ? ` · ${g.dirty.length} file dở` : ''} · comment ${r.comment_id}${ws}`);
+  },
+
+  async runlog() {
+    const id = taskId(rest[0]);
+    const args = { task_id: id, limit: Number(flags.limit ?? 50) };
+    if (flags.after) args.after_id = Number(flags.after);
+    if (flags.kind) args.kind = String(flags.kind);
+    if (flags.run) args.run_id = String(flags.run);
+    const r = await tb('run_events', args);
+    const evs = r.events ?? r.data?.events ?? [];
+    if (!evs.length) { console.log(`#${id}: chưa có run_event`); return; }
+    for (const e of evs) console.log(`${e.id ?? '-'} ${String(e.at ?? e.created_at ?? '').slice(11, 19)} ${String(e.kind ?? '?').padEnd(6)} ${cut(e.text ?? '', 120)}${e.run_id ? ` · run ${String(e.run_id).slice(0, 8)}` : ''}`);
+    console.log(`-- ${evs.length} bước · after_id kế: ${evs[evs.length - 1].id ?? '?'}`);
   },
 
   async takeover() {
