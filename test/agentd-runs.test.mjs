@@ -317,3 +317,14 @@ test('#1060 (6) trạng thái NV tổng hợp từ attempt: working / waiting_ow
     st = d.staffStateOf("N"); assert.equal(st.state, "idle");
   } finally { d.stop(); }
 });
+
+test('daemon #1060: adapter trả {ok:false, hold:true} (repo có lượt mutate) ⇒ Run pre đóng "held", KHÔNG tính lỗi, KHÔNG báo KẸT, retryAt ~60s', async () => {
+  const makeClient = () => ({ init: async () => 1, tb: async () => ({}), ai: async () => ({}), call: async () => ({}) });
+  const d = mkDaemon({ H: { adapter: 'command', command: [process.execPath, '-e', '0'] } }, {}, { makeClient, getAdapter: () => ({ name: 'command', spawns: true, wake: async () => ({ ok: false, hold: true, detail: 'HOÃN: repo đang có lượt mutate' }) }) });
+  await d.load();
+  const r = await d.wakeNow('H', 'a', [{ kind: 'message', text: 'x', task: '162801#1062' }]);
+  assert.equal(r.hold, true);
+  const run = d.runs.list().find((x) => x.staff === 'H');
+  assert.equal(run.outcome, 'held'); assert.ok(run.ended_at);
+  const s = d.st.get('H'); assert.equal(s.failures, 0); assert.equal(s.stuckAt ?? null, null); assert.ok(s.retryAt - Date.now() > 50_000); assert.match(s.lastWake, /mutate/);
+});
