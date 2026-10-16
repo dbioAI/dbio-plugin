@@ -13,7 +13,7 @@
  *   runs [--month YYYY-MM] [--staff <tên>] [--limit N] [--json]   sổ Run do agentd ĐO (model thật, tài khoản, token vào/cache/ra từ CLI; thiếu ⇒ trống, không 0) + tỉ lệ run có usage thật
  *   lease acquire|renew|release|status <tài nguyên> …   lease cả máy cho tài nguyên chia sẻ (browser = Chrome thật; repo-<tên> = 1 lượt mutate/repo; merge-<tên> = hàng gộp), 1 chủ/lúc; acquire --holder <tên> [--ttl 300] [--pid N]; renew/release --holder <tên> --gen N
  *   worktree <sổ#thẻ> --repo <tên|đường dẫn>[,…] [--json]   (#1062) tạo/dùng lại worktree RIÊNG của thẻ (<gốc>/.wt/<repo>-t<id>, nhánh wt/<repo>-t<id>) — idempotent, in trạng thái bền (sha, file dở)
- *   merge <sổ#thẻ> --repo <tên|đường dẫn>[,…] [--test "<lệnh>" | --no-test] [--strategy rebase|merge] [--json]   (#1062) gộp worktree thẻ về main TUẦN TỰ: hàng chờ + lease → fetch → rebase → test → push (không --force); xung đột/test đỏ/cây bẩn ⇒ mã 3, không ghi đè
+ *   merge <sổ#thẻ> --repo <tên|đường dẫn>[,…] [--test "<lệnh>" | --no-test] [--strategy pick|rebase|merge] [--json]   (#1062) gộp worktree thẻ về main TUẦN TỰ: hàng chờ + lease → fetch → cherry-pick lên origin/main (mặc định) → test → push (không --force); xung đột/test đỏ/cây bẩn ⇒ mã 3, không ghi đè
  *
  * Cấu hình: MỘT tệp ~/.dbio/agentd.json (DBIO_AGENTD_CONFIG đổi đường dẫn) — xem README mục "Daemon dbio-agentd". Khoá: ~/.dbio/staff-keys/<tên>.json (không in, không ghi log).
  * Mã thoát: 0 ok · 1 lỗi · 2 thiếu cấu hình/khoá.
@@ -149,7 +149,7 @@ const cmds = {
   /** #1062: worktree / merge theo thẻ — repo = tên dưới $DBIO_ROOT hoặc đường dẫn repo git. */
   async worktree() { for (const { repo, card } of repoArgs()) { const w = prepareWorktree({ repo, card }); printWt(w, repo); if (!w.ok) process.exitCode = 3; } },
   async merge() {
-    const strategy = flags.strategy === 'merge' ? 'merge' : 'rebase';
+    const strategy = ['merge', 'rebase'].includes(flags.strategy) ? flags.strategy : 'pick';
     const test = flags['no-test'] ? null : (typeof flags.test === 'string' ? flags.test : undefined);
     for (const { repo, card } of repoArgs()) {
       const r = await mergeCard({ repo, card, strategy, test, holder: `merge:${card}:${process.pid}` });
