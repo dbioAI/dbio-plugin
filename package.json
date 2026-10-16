@@ -1,6 +1,6 @@
 {
   "name": "dbio-plugin",
-  "version": "0.3.24",
+  "version": "0.3.25",
   "description": "Bộ nhẹ để nhân viên AI / phòng ban làm việc với dbio qua MCP: dbio-staff (sổ cái, canh tin, listen đẩy WebSocket, playbook) + daemon dbio-agentd nhận việc.",
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
     "dbio-agentd": "bin/dbio-agentd.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-concurrency=2 test/*.test.mjs"
   },
   "license": "UNLICENSED",
   "dependencies": {

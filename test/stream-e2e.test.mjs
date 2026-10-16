@@ -215,3 +215,19 @@ test('#872 nợ 4: backlog nhắc CŨ trên thẻ đã Xong ⇒ bỏ + ack, KHÔ
     assert.equal(s.state.dropped, 1);
   } finally { s.stop(); await srv.stop(); }
 });
+
+test('#1075 mục 11: 4002 + retry4002 ⇒ state.channel=closed_4002, onChannel 1 lần, nối lại được ⇒ open; không đặt retry4002 ⇒ thôi như cũ', async () => {
+  let round = 0;
+  const srv = await startFakeServer({ onConnect: (c) => { c.send(hello(0)); round++; if (round === 1) setTimeout(() => c.close(4002), 100); } });
+  const name = uniq(); const ev = [];
+  const s = runStream({ name, consumer: 'e2e', cfg: { key: KEY, mcp_url: srv.mcpUrl }, coalesceMs: 0, tickMs: 20, log: () => {}, deliver: async () => true, retry4002: [50, 100], onChannel: (ch) => ev.push(ch) });
+  s.done.catch(() => {});
+  try {
+    await waitFor(() => ev.includes('closed_4002'));
+    await waitFor(() => round >= 2 && s.state.channel === 'open', 4000);
+    assert.deepEqual(ev, ['closed_4002', 'open']);
+  } finally { s.stop(); await srv.stop(); }
+  const srv2 = await startFakeServer({ onConnect: (c) => { c.send(hello(0)); setTimeout(() => c.close(4002), 50); } });
+  const s2 = runStream({ name: uniq(), consumer: 'e2e', cfg: { key: KEY, mcp_url: srv2.mcpUrl }, coalesceMs: 0, tickMs: 20, log: () => {}, deliver: async () => true });
+  try { await Promise.race([s2.done, new Promise((_, r) => setTimeout(() => r(new Error('không dừng')), 3000))]); assert.equal(srv2.conns.length, 1); } finally { s2.stop(); await srv2.stop(); }
+});
