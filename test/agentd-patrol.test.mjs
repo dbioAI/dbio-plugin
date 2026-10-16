@@ -101,3 +101,14 @@ test('#1079 patrol: Đang làm không Run ⇒ tiếp quản (rescue)', async () 
   await h.d.start(); await h.d.patrol();
   assert.equal(h.woken.length, 1); assert.match(h.woken[0], /77#9/); assert.match(h.woken[0], /không phiên nào làm/); h.d.stop();
 });
+
+test('#1079 patrol: mỗi nhịp ghi 1 dòng log tóm tắt (kể cả 0) + status.patrol', async () => {
+  const h0 = mkPatrolDaemon({ tasks: [] });
+  await h0.d.start(); await h0.d.patrol();
+  assert.ok(h0.logs.some((l) => /^tuần tra: kiểm 0 thẻ · claim 0 · kẹt 0 · điếc 0$/.test(l)));
+  const s0 = h0.d.writeStatus(); assert.equal(s0.patrol.checked, 0); assert.ok(s0.patrol.last_at); h0.d.stop();
+  const h = mkPatrolDaemon({ tasks: [pt(6, 1, 15)] });
+  await h.d.start(); await h.d.patrol();
+  assert.ok(h.logs.some((l) => /^tuần tra: kiểm 1 thẻ · claim 1 · kẹt 0 · điếc 0$/.test(l)));
+  const s = h.d.writeStatus(); assert.deepEqual(s.patrol.actions, { claim: 1, rescue: 0, stuck: 0, deaf: 0 }); h.d.stop();
+});
