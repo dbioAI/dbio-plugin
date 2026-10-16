@@ -16,6 +16,8 @@ const ROOT = mkdtempSync(join(tmpdir(), 'agentd-wt-'));
 Object.assign(process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', DBIO_WORKTREE_ROOT: join(ROOT, '.wt'), DBIO_AGENTD_LEASE_DIR: join(ROOT, 'leases'), DBIO_TURN_GUARD_DIR: join(ROOT, 'guard') });
 const g = (cwd, ...a) => String(execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).trim();
 const LINES = 20;
+// Test git THẬT nặng (git 2.7 Windows ~40s/cặp): chạy cùng bộ `npm test` (song song theo tệp) làm test canh giờ #872 chập chờn ⇒ chỉ khi T1062_GIT=1 (T1062_FULL=1 = đủ 10 cặp).
+const HEAVY = { skip: process.env.T1062_GIT || process.env.T1062_FULL ? false : 'đặt T1062_GIT=1 (git thật, nặng)' };
 
 /** origin trần + bản chính `<ROOT>/<name>` có shared.txt 20 dòng. */
 function makeRepo(name) {
@@ -36,7 +38,7 @@ function mergeProc(card, repoName) {
   });
 }
 
-test('#1062 ĐẠT-1: 10 cặp (T1062_FULL=1; mặc định 2) thẻ sửa CÙNG tệp, gộp ĐỒNG THỜI (2 tiến trình) ⇒ 0 mất sửa âm thầm', { timeout: 1_200_000 }, async () => {
+test('#1062 ĐẠT-1: 10 cặp (T1062_FULL=1; mặc định 2) thẻ sửa CÙNG tệp, gộp ĐỒNG THỜI (2 tiến trình) ⇒ 0 mất sửa âm thầm', { ...HEAVY, timeout: 1_200_000 }, async () => {
   const repo = makeRepo('proj');
   let silent = 0; let merged = 0; let conflicts = 0;
   const PAIRS = process.env.T1062_FULL ? 10 : 2; // ĐẠT đầy đủ: T1062_FULL=1 (git 2.7 Windows chậm ~40s/cặp)
@@ -65,7 +67,7 @@ test('#1062 ĐẠT-1: 10 cặp (T1062_FULL=1; mặc định 2) thẻ sửa CÙNG
   assert.equal(originFile(repo).split('\n').filter(Boolean).length, LINES, 'tệp không hỏng/nhân dòng');
 });
 
-test('#1062 ĐẠT-2: 10 lần checkpoint/phục hồi ⇒ worktree dùng lại NGUYÊN TRẠNG, cảnh báo không lặp, gộp không đẩy 2 lần', { timeout: 120_000 }, async () => {
+test('#1062 ĐẠT-2: 10 lần checkpoint/phục hồi ⇒ worktree dùng lại NGUYÊN TRẠNG, cảnh báo không lặp, gộp không đẩy 2 lần', { ...HEAVY, timeout: 600_000 }, async () => {
   const repo = makeRepo('proj2'); const card = '9#500';
   const leases = createLeases({ dir: join(ROOT, 'leases2') }); const queue = createMergeQueue({ dir: join(ROOT, 'q2') });
   let lastHead = null; let lastDirty = null; const paths = new Set();
@@ -103,7 +105,7 @@ test('#1062 ĐẠT-2: 10 lần checkpoint/phục hồi ⇒ worktree dùng lại 
   assert.equal(leases.status('merge-proj2')?.held ?? false, false, 'lease gộp đã nhả');
 });
 
-test('#1062 test tích hợp đỏ ⇒ KHÔNG push, nhánh thẻ giữ nguyên', { timeout: 60_000 }, async () => {
+test('#1062 test tích hợp đỏ ⇒ KHÔNG push, nhánh thẻ giữ nguyên', { ...HEAVY, timeout: 120_000 }, async () => {
   const repo = makeRepo('proj3'); const card = '9#600';
   const w = prepareWorktree({ repo, card }); editLine(w.path, 3, 'x'); g(w.path, 'commit', '-qam', 'x');
   const before = g(repo.path, 'ls-remote', 'origin', 'refs/heads/main').split(/\s/)[0];
