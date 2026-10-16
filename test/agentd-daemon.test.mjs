@@ -466,3 +466,50 @@ test('#1060 H6-1: 2 tin cùng nhân viên tới liền nhau ⇒ chỉ MỘT lư�
     assert.equal(woken.length, 1, 'chỉ 1 lượt spawn');
   } finally { d.stop(); await srv.stop(); }
 });
+
+test('#1060 (b) ATTEMPT_BUSY do attempt mồ côi của CHÍNH máy này ⇒ đóng lost rồi claim lại + spawn; của máy khác ⇒ không đụng, không spawn', async () => {
+  for (const own of [true, false]) {
+    const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+    const name = uniq(); const woken = []; const recs = []; let openRun = 'orphan-1';
+    const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc' } });
+    const d = createDaemon({
+      loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {}, machine: 'M1',
+      makeClient: () => ({ ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async (tool, a) => {
+        if (a.action !== 'run_record') return {};
+        recs.push(a);
+        if (a.run_id === 'orphan-1') { openRun = null; return {}; }
+        if (openRun) { const e = new Error('ATTEMPT_BUSY'); e.code = 'ATTEMPT_BUSY'; e.data = { run_id: openRun, attempt_no: 1, runner: own ? `${name}@M1` : `${name}@OTHER` }; throw e; }
+        return {};
+      } }),
+      getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok' }; } }),
+      stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+    });
+    try {
+      await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+      if (own) {
+        await waitFor(() => woken.length === 1, 8000);
+        const close = recs.find((r) => r.run_id === 'orphan-1'); assert.equal(close.outcome, 'lost'); assert.equal(close.status_detail, 'orphan_reclaimed');
+        assert.ok(recs.filter((r) => r.run_id !== 'orphan-1').length >= 2, 'claim hai lần (bị từ chối, rồi nhận)');
+      } else { await waitFor(() => recs.length >= 1, 8000); await new Promise((r) => setTimeout(r, 300)); assert.equal(woken.length, 0); assert.equal(recs.some((r) => r.run_id === 'orphan-1'), false); }
+    } finally { d.stop(); await srv.stop(); }
+  }
+});
+
+test('#1060 nối lượt kế: lượt xong ÊM + thẻ còn "Đang làm" có kế tiếp ⇒ tự thức lại; chain_max chặn vòng lặp; chain_next=false tắt', async () => {
+  for (const mode of ['on', 'off']) {
+    const srv = await startFakeServer({ onConnect: (c) => c.send(hello(0)) });
+    const name = uniq(); const woken = []; let n = 0;
+    const { config } = normalizeConfig({ staff: { [name]: { adapter: 'fake-desktop', session: 'local_x' } }, defaults: { coalesce_ms: 0, relay_to: 'PM giao việc', chain_delay_s: 0, chain_max: 2, ...(mode === 'off' ? { chain_next: false } : {}) } });
+    const d = createDaemon({
+      loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: () => {},
+      makeClient: () => ({ init: async () => 162801, tb: async () => ({ task: { id: 9, column: { name: 'Đang làm' }, work_state: { at: `t${++n}`, next: 'bước kế', by: name }, comments: [] } }), ai: async (tool, a) => ({ items: (a.ids ?? []).map((id) => ({ id, kind: 'assign', text: 'x', at: new Date().toISOString() })) }), call: async () => ({}) }),
+      getAdapter: () => ({ name: 'fake-desktop', spawns: true, isBlank: () => true, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx); return { ok: true, detail: 'ok', pid: 0, running: Promise.resolve({ code: 0, out: '', stdout: '' }) }; } }),
+      stream: (o) => runStream({ ...o, cfg: { key: KEY, mcp_url: srv.mcpUrl }, tickMs: 20 }),
+    });
+    try {
+      await d.start(); await waitFor(() => srv.conns.length === 1); srv.conns[0].send(evt(1, { task: '162801#9' }));
+      if (mode === 'on') { await waitFor(() => woken.length >= 3, 15000); await new Promise((r) => setTimeout(r, 800)); assert.equal(woken.length, 3, '1 lượt gốc + chain_max=2 lượt nối rồi dừng'); }
+      else { await waitFor(() => woken.length >= 1, 8000); await new Promise((r) => setTimeout(r, 800)); assert.equal(woken.length, 1); }
+    } finally { d.stop(); await srv.stop(); }
+  }
+});
