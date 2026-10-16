@@ -11,7 +11,9 @@
  *   wake <tên> [lời nhắc]    thử đánh thức một nhân viên qua adapter đã cấu hình (kiểm cấu hình mà không chờ việc thật)
  *   adapters                 danh sách adapter
  *   runs [--month YYYY-MM] [--staff <tên>] [--limit N] [--json]   sổ Run do agentd ĐO (model thật, tài khoản, token vào/cache/ra từ CLI; thiếu ⇒ trống, không 0) + tỉ lệ run có usage thật
- *   lease acquire|renew|release|status <tài nguyên> …   lease cả máy cho tài nguyên chia sẻ (hiện: browser = Chrome thật, 1 chủ/lúc); acquire --holder <tên> [--ttl 300] [--pid N]; renew/release --holder <tên> --gen N
+ *   lease acquire|renew|release|status <tài nguyên> …   lease cả máy cho tài nguyên chia sẻ (browser = Chrome thật; repo-<tên> = 1 lượt mutate/repo; merge-<tên> = hàng gộp), 1 chủ/lúc; acquire --holder <tên> [--ttl 300] [--pid N]; renew/release --holder <tên> --gen N
+ *   worktree <sổ#thẻ> --repo <tên|đường dẫn>[,…] [--json]   (#1062) tạo/dùng lại worktree RIÊNG của thẻ (<gốc>/.wt/<repo>-t<id>, nhánh wt/<repo>-t<id>) — idempotent, in trạng thái bền (sha, file dở)
+ *   merge <sổ#thẻ> --repo <tên|đường dẫn>[,…] [--test "<lệnh>" | --no-test] [--strategy rebase|merge] [--json]   (#1062) gộp worktree thẻ về main TUẦN TỰ: hàng chờ + lease → fetch → rebase → test → push (không --force); xung đột/test đỏ/cây bẩn ⇒ mã 3, không ghi đè
  *
  * Cấu hình: MỘT tệp ~/.dbio/agentd.json (DBIO_AGENTD_CONFIG đổi đường dẫn) — xem README mục "Daemon dbio-agentd". Khoá: ~/.dbio/staff-keys/<tên>.json (không in, không ghi log).
  * Mã thoát: 0 ok · 1 lỗi · 2 thiếu cấu hình/khoá.
@@ -31,8 +33,9 @@ import { ageMin } from '../lib/agentd/rules.mjs';
 import { installPm2, statusPm2, uninstallPm2 } from '../lib/agentd/pm2-cli.mjs';
 import { createRunStore, summarize } from '../lib/agentd/runs.mjs';
 import { createLeases, RESOURCES } from '../lib/agentd/lease.mjs';
+import { mergeCard, prepareWorktree, resolveRepo } from '../lib/agentd/worktree.mjs';
 
-const { flags, pos } = parseArgs(process.argv.slice(2), ['--month', '--staff', '--limit', '--holder', '--gen', '--ttl', '--pid', '--run']);
+const { flags, pos } = parseArgs(process.argv.slice(2), ['--month', '--staff', '--limit', '--holder', '--gen', '--ttl', '--pid', '--run', '--repo', '--test', '--strategy']);
 const [cmd, ...rest] = pos;
 if (!cmd || flags.help || flags.h) die(helpOf(import.meta.url), 0);
 const SCRIPT = resolve(fileURLToPath(import.meta.url));
@@ -131,7 +134,7 @@ const cmds = {
   async lease() {
     const [act, res = 'browser'] = rest;
     if (!['acquire', 'renew', 'release', 'status'].includes(act ?? '')) die('Dùng: lease acquire|renew|release|status [tài nguyên] --holder <tên> [--gen N] [--ttl giây] [--pid N]');
-    if (!RESOURCES.includes(res)) die(`Tài nguyên lạ "${res}". Có: ${RESOURCES.join(' · ')}`);
+    if (!RESOURCES.includes(res) && !/^(repo|merge)-[a-z0-9_-]{1,26}$/.test(res)) die(`Tài nguyên lạ "${res}". Có: ${RESOURCES.join(' · ')}`);
     const L = createLeases({});
     const out = (o, ok = o.ok !== false) => { console.log(flags.json ? JSON.stringify(o) : (ok ? 'ok ' : 'KHÔNG ') + JSON.stringify(o)); process.exit(ok ? 0 : 3); };
     const holder = flags.holder === true ? '' : String(flags.holder ?? '');
@@ -143,7 +146,36 @@ const cmds = {
     if (act === 'renew') { if (gen == null) die('Thiếu --gen N (số fencing nhận lúc acquire)'); out(L.renew(res, { holder, gen, ttl_s: ttl })); }
     out(L.release(res, { holder, gen }));
   },
+  /** #1062: worktree / merge theo thẻ — repo = tên dưới $DBIO_ROOT hoặc đường dẫn repo git. */
+  async worktree() { for (const { repo, card } of repoArgs()) { const w = prepareWorktree({ repo, card }); printWt(w, repo); if (!w.ok) process.exitCode = 3; } },
+  async merge() {
+    const strategy = flags.strategy === 'merge' ? 'merge' : 'rebase';
+    const test = flags['no-test'] ? null : (typeof flags.test === 'string' ? flags.test : undefined);
+    for (const { repo, card } of repoArgs()) {
+      const r = await mergeCard({ repo, card, strategy, test, holder: `merge:${card}:${process.pid}` });
+      if (flags.json) console.log(JSON.stringify({ repo: repo.name, ...r }));
+      else console.log(`${r.ok ? 'ok' : 'KHÔNG'} ${repo.name} ${card}: ${r.status}${r.sha ? ` · ${r.sha.slice(0, 7)}` : ''}${r.detail ? ` — ${r.detail}` : ''}${r.files?.length ? ` [${r.files.join(', ')}]` : ''}${r.tail ? `\n${r.tail}` : ''}`);
+      if (!r.ok) { process.exitCode = 3; break; } // repo sau không gộp khi repo trước hỏng
+    }
+  },
 };
+
+function repoArgs() {
+  const card = rest[0]; if (!/^\d+#\d+$/.test(String(card ?? ''))) die('Thiếu <sổ#thẻ> (vd 162801#1062)');
+  if (typeof flags.repo !== 'string') die('Thiếu --repo <tên|đường dẫn>[,…]');
+  return flags.repo.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+    const name = x.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    const repo = /[\\/]/.test(x) ? resolveRepo(name, { repos: { [name]: x } }) : resolveRepo(x);
+    if (!repo) die(`Không thấy repo git "${x}" (tên dưới DBIO_ROOT=${process.env.DBIO_ROOT ?? '?'} hoặc đường dẫn)`);
+    return { repo, card };
+  });
+}
+function printWt(w, repo) {
+  if (flags.json) return console.log(JSON.stringify({ repo: repo.name, ...w }));
+  if (!w.ok) return console.log(`KHÔNG ${repo.name}: ${w.detail}`);
+  const s = w.state ?? {};
+  console.log(`ok ${repo.name}: ${w.path} · nhánh ${w.branch} · HEAD ${String(s.head ?? '?').slice(0, 7)} · ${s.dirty?.length ? `${s.dirty.length} file dở` : 'sạch'} · +${s.ahead ?? '?'}/-${s.behind ?? '?'} · ${w.created ? 'MỚI tạo' : w.reattached ? 'gắn lại nhánh' : 'dùng lại'} · node_modules ${w.node_modules}`);
+}
 
 if (!cmds[cmd]) die(`Lệnh lạ "${cmd}". Có: ${Object.keys(cmds).join(' · ')}`);
 try { await cmds[cmd](); } catch (e) { die(`lỗi: ${e?.message ?? e}`, e?.auth ? 2 : 1); }
