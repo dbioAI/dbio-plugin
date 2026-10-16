@@ -25,6 +25,7 @@ import { client, die, helpOf, parseArgs } from '../lib/common.mjs';
 import { SAMPLE, configFile } from '../lib/agentd/config.mjs';
 import { adapterNames } from '../lib/agentd/adapters/index.mjs';
 import { createDaemon, readStatus } from '../lib/agentd/daemon.mjs';
+import { acquireInstanceLock, releaseInstanceLock } from '../lib/agentd/instance-lock.mjs';
 import { installPlan } from '../lib/agentd/service.mjs';
 import { ageMin } from '../lib/agentd/rules.mjs';
 import { installPm2, statusPm2, uninstallPm2 } from '../lib/agentd/pm2-cli.mjs';
@@ -38,6 +39,13 @@ const SCRIPT = resolve(fileURLToPath(import.meta.url));
 
 const cmds = {
   async run() {
+    // #1060 (c): một daemon / máy — bản thứ hai ĐỨNG CHỜ (không thoát để wrapper/pm2 không quay vòng), nhận việc khi bản kia chết
+    let lk = acquireInstanceLock({ statusRead: readStatus }); let warned = 0;
+    while (!lk.ok) {
+      if (Date.now() - warned > 300_000) { warned = Date.now(); console.error(`[agentd] đã có daemon khác đang chạy (pid ${lk.owner}) — bản này đứng chờ, KHÔNG nhận việc (tránh 2 Run / 1 @mention).`); }
+      await new Promise((r) => setTimeout(r, 10_000)); lk = acquireInstanceLock({ statusRead: readStatus });
+    }
+    process.on('exit', () => releaseInstanceLock());
     const clients = new Map();
     const makeClient = (n) => { if (!clients.has(n)) clients.set(n, client(n, { throwAuth: true })); return clients.get(n); };
     const d = createDaemon({ makeClient });
