@@ -187,7 +187,7 @@ async function gatherEvidence(id, { dir, deploy = null } = {}) {
   if (flags['no-evidence'] || process.env.DBIO_EVIDENCE === '0') return '';
   try {
     const mk = loadMachineKey({ fallbackMcp: mcpFromStaffKeys() });
-    const call = mk ? (a) => machineCall(mk, 'task_board', { action: 'evidence_add', ...a }) : null;
+    const call = mk ? (a) => machineCall(mk, 'task_board', { action: 'evidence_add', as: WHO, ...a }) : null;
     const prev = await tb('task_get', { task_id: id, comments: 0, body_max: 0, description_max: 0 }).then((r) => r?.task?.work_state ?? {}).catch(() => ({}));
     const facts = collectGit(dir ?? process.cwd(), undefined, undefined, flags['attempt-base'] || prev.attempt_base || null);
     const r = await collectAndSend({ board: BOARD, card: id, dir, call, facts, deploy, attemptBase: prev.attempt_base || facts?.base || null, author: WHO, runId: process.env.DBIO_RUN_ID || prev.run_id || null });

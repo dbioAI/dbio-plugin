@@ -19,9 +19,9 @@ function fixture() {
   return { origin, w };
 }
 
-test('weakeningLines: chỉ dòng + làm yếu test', () => {
-  const d = '+++ b/x\n+  it.skip("a")\n+ normal\n-  it.skip("old")\n+ jest --passWithNoTests\n+  xit("b")';
-  assert.deepEqual(weakeningLines(d), ['it.skip("a")', 'jest --passWithNoTests', 'xit("b")']);
+test('weakeningLines: chỉ dòng + làm yếu test; token trong chuỗi ở mã nguồn không tính, trong json/yml thì tính', () => {
+  const d = ['+++ b/src/a.test.mjs', '+  it.skip("a")', '+ normal', '-  it.skip("old")', '+  xit("b")', "+ const s = 'it.skip(1) passWithNoTests'", '+++ b/package.json', '+ "test": "jest --passWithNoTests"'].join('\n');
+  assert.deepEqual(weakeningLines(d), ['it.skip("a")', 'xit("b")', '"test": "jest --passWithNoTests"']);
   assert.deepEqual(weakeningLines(''), []);
 });
 
@@ -38,11 +38,11 @@ test('collectGit: nhánh có commit ⇒ head/base/files/deleted/added_lines; on_
   assert.equal(collectGit(join(tmpdir(), 'khong-co-repo-' + Date.now())), null);
   const main = sh(w, 'rev-parse', 'HEAD');
   sh(w, 'checkout', '-qb', 'feat'); writeFileSync(join(w, 'b.txt'), 'new\n'); sh(w, 'add', '-A'); sh(w, 'commit', '-qm', 'b');
-  sh(w, 'rm', '-q', 'a.test.mjs'); writeFileSync(join(w, 'c.test.mjs'), 'it.skip("y")\n'); sh(w, 'add', '-A'); sh(w, 'commit', '-qm', 'c');
+  sh(w, 'rm', '-q', 'a.test.mjs'); writeFileSync(join(w, 'c.test.mjs'), 'describe("y", () => { it.skip("z", () => {}); });\n'); sh(w, 'add', '-A'); sh(w, 'commit', '-qm', 'c');
   const f = collectGit(w);
   assert.equal(f.base, main); assert.equal(f.head, sh(w, 'rev-parse', 'HEAD')); assert.equal(f.branch, 'feat');
   assert.deepEqual(f.files.sort(), ['a.test.mjs', 'b.txt', 'c.test.mjs']); assert.deepEqual(f.deleted, ['a.test.mjs']);
-  assert.deepEqual(f.added_lines, ['it.skip("y")']); assert.equal(f.on_main, false);
+  assert.deepEqual(f.added_lines, ['describe("y", () => { it.skip("z", () => {}); });']); assert.equal(f.on_main, false);
   sh(w, 'checkout', '-q', 'main'); sh(w, 'merge', '-q', '--ff-only', 'feat'); sh(w, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   assert.equal(collectGit(w).on_main, true);
 });
@@ -94,7 +94,7 @@ test('turnEndEvidence: gửi bằng khoá máy (action evidence_add), vá work_s
   const client = { init: async () => {}, tb: async (a, args) => { tbs.push([a, args]); return a === 'task_get' ? { task: { work_state: { next: 'x', blocked: null, at: 'T', by: 'NV1' } } } : {}; } };
   const r = await turnEndEvidence({ run: { run_id: 'run-1', card: '9#21', base_sha: start }, name: 'NV1', cwd: w, mk: { key: 'k'.repeat(20), mcp_url: 'u' }, client, mcall: async (mk, tool, args) => { mcalls.push([tool, args]); return {}; } });
   assert.deepEqual(r.sent, ['attempt_base', 'repo_sha', 'scope_diff']); assert.equal(r.patched, true);
-  assert.ok(mcalls.every(([t, a]) => t === 'task_board' && a.action === 'evidence_add' && a.profile_id === 9 && a.task_id === 21));
+  assert.ok(mcalls.every(([t, a]) => t === 'task_board' && a.action === 'evidence_add' && a.as === 'NV1' && a.profile_id === 9 && a.task_id === 21));
   assert.equal(mcalls[0][1].payload.author, 'NV1');
   const cp = tbs.find(([a]) => a === 'checkpoint')[1];
   assert.equal(cp.task_id, 21); assert.equal(cp.work_state.run_id, 'run-1'); assert.equal(cp.work_state.attempt_base, start); assert.equal(cp.work_state.next, 'x'); assert.equal('at' in cp.work_state, false);
