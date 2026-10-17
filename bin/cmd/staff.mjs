@@ -96,7 +96,7 @@ import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
-  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours', '--preset', '--target', '--deploy-version', '--deploy-sha'];
+  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours', '--preset', '--target', '--deploy-version', '--deploy-sha', '--attempt-base'];
 const ARGV = process.argv.slice(2); const DD = ARGV.indexOf('--');   // #1089: sau `--` là lệnh của `staff run`, không phân tích thành cờ
 const { flags, pos } = parseArgs(DD >= 0 ? ARGV.slice(0, DD) : ARGV, VALUE_FLAGS, ['--out', '--opt']);
 const [cmd, ...rest] = pos;
@@ -188,8 +188,8 @@ async function gatherEvidence(id, { dir, deploy = null } = {}) {
   try {
     const mk = loadMachineKey({ fallbackMcp: mcpFromStaffKeys() });
     const call = mk ? (a) => machineCall(mk, 'task_board', { action: 'evidence_add', ...a }) : null;
-    const facts = collectGit(dir ?? process.cwd());
     const prev = await tb('task_get', { task_id: id, comments: 0, body_max: 0, description_max: 0 }).then((r) => r?.task?.work_state ?? {}).catch(() => ({}));
+    const facts = collectGit(dir ?? process.cwd(), undefined, undefined, flags['attempt-base'] || prev.attempt_base || null);
     const r = await collectAndSend({ board: BOARD, card: id, dir, call, facts, deploy, attemptBase: prev.attempt_base || facts?.base || null, author: WHO, runId: process.env.DBIO_RUN_ID || prev.run_id || null });
     return summarize(r);
   } catch (e) { return ` · chứng cứ: lỗi ${String(e?.message ?? e).slice(0, 120)}`; }

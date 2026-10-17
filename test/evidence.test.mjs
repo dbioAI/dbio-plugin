@@ -102,3 +102,13 @@ test('turnEndEvidence: gửi bằng khoá máy (action evidence_add), vá work_s
   const nokey = await turnEndEvidence({ run: { run_id: 'r2', card: '9#22' }, name: 'NV1', cwd: w, mk: null, client: null });
   assert.equal(nokey.skipped, 'no_machine_key');
 });
+
+test('collectGit: commit thẳng lên main — có attempt_base (tổ tiên) ⇒ diff base..head khác rỗng; hint rác ⇒ rơi về merge-base', () => {
+  const { w } = fixture(); const start = sh(w, 'rev-parse', 'HEAD');
+  writeFileSync(join(w, 'm.txt'), 'm'); sh(w, 'add', '-A'); sh(w, 'commit', '-qm', 'm'); sh(w, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  assert.deepEqual(collectGit(w).files, []);   // không hint: merge-base = HEAD ⇒ rỗng
+  const f = collectGit(w, undefined, undefined, start);
+  assert.equal(f.base, start); assert.deepEqual(f.files, ['m.txt']); assert.equal(f.on_main, true);
+  assert.deepEqual(collectGit(w, undefined, undefined, 'zzzzzzz').files, []);
+  assert.deepEqual(collectGit(w, undefined, undefined, 'f'.repeat(40)).files, []);   // sha không tồn tại
+});
