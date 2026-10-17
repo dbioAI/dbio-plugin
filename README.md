@@ -152,6 +152,15 @@ Phần dưới là lịch sử trước v0.3.3:
   ```
   Store ≠ 2 ⇒ lưu `~/.dbio/staff-keys/<tên>@s<store>.json` (không ghi đè khoá store nhà); dùng bằng `dbio-staff --as "<tên>" --store <store> …`. `--board` ghi trường `board` vào khoá (vd Marketing: 165501). Ví dụ cấp khoá store 4 cho nhân viên Marketing đọc CRM/Mimi: `--store 4 --platform 4 --board 165501`.
 
+## Collector chứng cứ G3 (#1089, cổng #1063 — backend docs §87)
+
+`staff checkpoint` / `staff done` và agentd (cuối mỗi lượt) TỰ thu rồi gửi `task_board evidence_add` bằng **khoá máy** (`~/.dbio/machine.key`; kèm `as` = nhân viên cầm thẻ — máy chủ đặt tác giả/máy): `attempt_base` · `repo_sha` (head, `on_main` = tổ tiên của origin/main) · `scope_diff` (tệp đổi, tệp xoá, dòng làm yếu test) · `record` · `deploy`. Thứ tự gửi cố định repo_sha → scope_diff → record (máy chủ đòi record SAU sha cuối); đã gửi thì không gửi lại (`~/.dbio/evidence/`). Không có khoá máy / lỗi mạng ⇒ chỉ cảnh báo, không chặn checkpoint.
+
+- `dbio-staff staff run <thẻ> [--preset unit|build|build:dash|perm_test|negative_cases|sandbox] -- <lệnh…>` chạy lệnh kiểm và ghi bản ghi (preset, exit, sha); collector gửi ở checkpoint kế (chỉ bản ghi trên đúng HEAD hiện tại).
+- `dbio-staff staff gate <thẻ> [--target review|done] [--deploy]` = gate_check dry-run (thoát 3 khi còn thiếu).
+- `--attempt-base <sha>` (hoặc work_state.attempt_base do agentd ghi) làm gốc diff khi commit thẳng lên main; `--deploy-version <v> [--deploy-sha <sha>]` khi thẻ có triển khai; tắt: `--no-evidence` | `DBIO_EVIDENCE=0`; agentd: `defaults.evidence_collect=false`.
+- Chế độ chặn do máy chủ giữ (`platform_config evidence_gate.mode` = off|warn|block, mặc định warn).
+
 ## Biến môi trường
 
 | Biến | Ý nghĩa |
@@ -160,6 +169,8 @@ Phần dưới là lịch sử trước v0.3.3:
 | `DBIO_STAFF` | tên nhân viên (thay `--as`) |
 | `DBIO_BOARD` | sổ cái mặc định |
 | `DBIO_PM_NAME` | tên trưởng nhóm để @nhắc (mặc định "PM") |
+| `DBIO_EVIDENCE` | `0` tắt collector chứng cứ G3 |
+| `DBIO_EVIDENCE_DIR` | thư mục bản ghi/đã-gửi (mặc định `~/.dbio/evidence`) |
 | `DBIO_DONE_REQUIRE_OUT` | `0` tắt cổng bắt buộc sản phẩm kèm báo xong |
 
 Cấu hình thư ký canh tin (tuỳ chọn): `~/.dbio/watch.json` `{"secretaries": ["<tên>"]}` (máy chủ trả vai thì không cần).
