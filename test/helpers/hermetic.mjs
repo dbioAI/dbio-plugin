@@ -25,3 +25,5 @@ if (homedir() === process.env.DBIO_REAL_HOME || process.env.DBIO_HOME === homedi
 export const claudeSpawned = () => existsSync(process.env.DBIO_TEST_CLAUDE_MARKER);
 // Mọi tệp test chạy tiến trình riêng ⇒ tự kiểm lúc thoát: có dấu `claude` giả ⇒ tệp này đã gọi claude ⇒ THẤT BẠI.
 if (!globalThis.__hermeticExit) { globalThis.__hermeticExit = true; process.on('exit', () => { if (existsSync(process.env.DBIO_TEST_CLAUDE_MARKER)) { console.error('HERMETIC: test đã gọi `claude` — cấm (dùng bin giả + DBIO_HOME tạm): ' + readFileSync(process.env.DBIO_TEST_CLAUDE_MARKER, 'utf8').trim().slice(0, 600)); process.exitCode = 1; } }); }
+// #1082 tự kết thúc: mỗi tệp test là một tiến trình riêng ⇒ đồng hồ chó giữ nhà (unref) giết tiến trình nếu treo >5', không để harness mồ côi sống sau test.
+if (!globalThis.__hermeticDog) { globalThis.__hermeticDog = true; const t = setTimeout(() => { console.error('HERMETIC: tệp test treo >5 phút — tự thoát'); process.exit(98); }, 300000); t.unref(); }
