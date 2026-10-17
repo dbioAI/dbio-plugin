@@ -121,3 +121,11 @@ test('(#828) proposeSpec --urgent: nhãn khan + @PM + @nhắc có chữ KHẨN',
   const s = proposeSpec({ title: 'T', who: 'X', now: 'n', urgent: true });
   assert.deepEqual(s.labels, ['gop-y', 'khan', '@PM']); assert.match(s.wakeNote, /KHẨN @PM/);
 });
+
+// ---- #1084: stuck --kind owner chỉ nhận GO cứng
+import { resolveStuckKind } from '../lib/staff-logic.mjs';
+test('resolveStuckKind: owner + GO cứng giữ owner; thiếu/khác ⇒ pm; kind khác giữ nguyên', () => {
+  for (const r of ['money', 'auth', 'publish', 'delete', 'dns', 'legal', 'auth_required', 'MONEY']) assert.equal(resolveStuckKind('owner', r).kind, 'owner', r);
+  for (const r of [undefined, true, '', 'needs_owner', 'quota_limited', 'tien']) { const x = resolveStuckKind('owner', r); assert.equal(x.kind, 'pm', String(r)); assert.equal(x.downgraded, true); }
+  assert.deepEqual(resolveStuckKind('pm', undefined), { kind: 'pm', reason: null, downgraded: false });
+});

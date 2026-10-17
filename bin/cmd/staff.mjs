@@ -83,7 +83,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { hostname } from 'node:os';
 import { client, internalRoot, cut, die, git, gitFacts, helpOf, labelsOf, parseArgs, run, taskId, whoAmI } from '../../lib/common.mjs';
-import { assignMentions, buildReason, formatHire, hireArgs, hireStatsLine, isApprovalColumn, localFilesOf, mediaUrlOf, outGate, outLine, parseOut, proposeSpec, reasonArgs, requireOutOn, taskRef, toDeliverable } from '../../lib/staff-logic.mjs';
+import { assignMentions, buildReason, formatHire, hireArgs, hireStatsLine, isApprovalColumn, localFilesOf, mediaUrlOf, outGate, outLine, parseOut, proposeSpec, reasonArgs, requireOutOn, resolveStuckKind, taskRef, toDeliverable } from '../../lib/staff-logic.mjs';
 import { COALESCE_MS, MAX_SHOW, coalesceGate, directGate, filterInbox, formatItem, isCopy, isGopYTalk, isSecretary, isSelf, pickBatch, shouldWake, taskIdOf } from '../../lib/watch-filter.mjs';
 import { formatAction, formatNext, pickNext } from '../../lib/secretary.mjs';
 import { runSweep } from '../../lib/secretary-io.mjs';
@@ -564,8 +564,10 @@ const cmds = {
       console.log(`ok #${id} hết kẹt · ${WHO} = working${back}`);
       return;
     }
-    const kind = String(flags.kind ?? '');
-    if (!KINDS.includes(kind)) die(`--kind phải là ${KINDS.join('|')}`);
+    const kind0 = String(flags.kind ?? '');
+    if (!KINDS.includes(kind0)) die(`--kind phải là ${KINDS.join('|')}`);
+    const { kind, downgraded } = resolveStuckKind(kind0, flags.reason); // #1084: owner chỉ cho GO cứng (--reason money|auth|publish|delete|dns|legal), khác ⇒ pm
+    if (downgraded) console.log('⚠ --kind owner chỉ nhận --reason money|auth|publish|delete|dns|legal (GO cứng) ⇒ tự chuyển --kind pm (chờ PM). Đây là cách NV báo chờ PM — KHÔNG bình luận "ĐANG CHỜ".');
     const why = String(flags.why ?? rest.slice(1).join(' ')).trim();
     if (!why) die('Thiếu chi tiết 1 dòng: dbio staff stuck <thẻ> --kind pm "<vì sao>" --need "<cần gì>"');
     const need = flags.need ? String(flags.need).trim() : '';

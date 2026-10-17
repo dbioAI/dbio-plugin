@@ -52,12 +52,12 @@ test('migrate: TƯƠNG THÍCH NGƯỢC — staff[] giữ nguyên, chỉ thêm st
 });
 
 function harness({ roster, cache = null, fail = false, key = MK, keyDir = join(work, `keys-${Math.random().toString(36).slice(2)}`) }) {
-  const calls = []; const issued = []; const forgot = []; const started = [];
+  const staffBeats = []; const calls = []; const issued = []; const forgot = []; const started = [];
   let cur = roster; let cached = cache; let down = fail;
   const { config } = normalizeConfig({ discover: { enabled: true }, defaults: { coalesce_ms: 0 } });
   const d = createDaemon({
     loadCfg: () => ({ config, errors: [] }), log: process.env.TLOG ? console.log : () => {}, keyDir, machine: 'M',
-    makeClient: () => ({ ai: async () => ({}), call: async () => ({}), init: async () => 1, tb: async () => ({}) }),
+    makeClient: () => ({ ai: async () => ({}), call: async (_t, a) => { if (a?.action === 'worker_beat') staffBeats.push(a); return {}; }, init: async () => 1, tb: async () => ({}) }),
     stream: (o) => ({ state: { connected: true }, queue: [], done: new Promise(() => {}), stop: () => { started.push(`stop:${o.name}`); } }),
     getAdapter: (a) => ({ name: a, wake: async () => ({ ok: true, detail: 'adapter giả (hermetic)' }) }),
     loadMachineKey: () => key, forgetClient: (n) => forgot.push(n),
@@ -71,7 +71,7 @@ function harness({ roster, cache = null, fail = false, key = MK, keyDir = join(w
       return {};
     },
   });
-  return { d, keyDir, calls, issued, forgot, started, set: (r) => { cur = r; }, setDown: (v) => { down = v; }, cache: () => cached };
+  return { d, staffBeats, keyDir, calls, issued, forgot, started, set: (r) => { cur = r; }, setDown: (v) => { down = v; }, cache: () => cached };
 }
 
 test('roster thêm/bớt: người mới được cấp khoá + bật listener; bị gỡ ⇒ dừng listener + xoá khoá', async () => {
@@ -132,4 +132,19 @@ test('khoá máy: khoá trần mượn mcp_url + store_id từ khoá nhân viên
   writeFileSync(f, JSON.stringify({ key: 'mk_jsonkey_abcdefghijklmnop', mcp_url: 'https://j/mcp', store_id: 3 }));
   const j = loadMachineKey({ env: {}, file: f, fallbackMcp: { mcp_url: 'https://x/mcp', store_id: 7 } });
   assert.equal(j.mcp_url, 'https://j/mcp'); assert.equal(j.store_id, 3);
+});
+
+test('#1084 runtime_kind (tên trường thật #1081) được đọc ngoài runtime/agent', () => {
+  assert.equal(adapterForRosterEntry({ name: 'A', runtime_kind: 'claude_desktop' }), 'claude-desktop');
+  assert.equal(adapterForRosterEntry({ name: 'A', runtime_kind: 'claude_cli', session_ref: 's' }), 'claude-cli');
+  assert.equal(adapterForRosterEntry({ name: 'A', runtime: { runtime_kind: 'claude_desktop' } }), 'claude-desktop');
+  assert.equal(adapterForRosterEntry({ name: 'A', runtime: 'claude_cli', runtime_kind: 'claude_desktop' }), 'claude-cli'); // runtime thắng
+});
+
+test('#1084 worker_beat: có khoá máy mà lỗi ⇒ KHÔNG rơi xuống khoá nhân viên (máy chủ từ chối "đã có khoá máy")', async () => {
+  const h = harness({ roster: { revision: 1, staff: [S('NV1')] } });
+  await h.d.load(); await h.d.discover();
+  h.setDown(true); await h.d.workerBeat();
+  assert.ok(h.calls.includes('worker_beat')); assert.equal(h.staffBeats.length, 0);
+  h.d.stop();
 });

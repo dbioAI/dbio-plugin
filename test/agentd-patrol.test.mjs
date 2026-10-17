@@ -112,3 +112,12 @@ test('#1079 patrol: mỗi nhịp ghi 1 dòng log tóm tắt (kể cả 0) + stat
   assert.ok(h.logs.some((l) => /^tuần tra: kiểm 1 thẻ · claim 1 · kẹt 0 · điếc 0$/.test(l)));
   const s = h.d.writeStatus(); assert.deepEqual(s.patrol.actions, { claim: 1, rescue: 0, stuck: 0, deaf: 0 }); h.d.stop();
 });
+
+// ---- #1084: tuần tra bỏ qua thẻ chờ PM/chủ
+test('#1084 Đang làm có blocked_reason / work_state blocked|waiting|owner_hold ⇒ KHÔNG tiếp quản; thẻ thường vẫn rescue', () => {
+  assert.equal(plan([task(1, 2, 30, { blocked_reason: 'needs_review' })]).length, 0);
+  assert.equal(plan([task(1, 2, 30, { work_state: { blocked: 'pm', waiting: 'chờ PM' } })]).length, 0);
+  assert.equal(plan([task(1, 2, 30, { work_state: { waiting: 'x' } })]).length, 0);
+  assert.equal(plan([task(1, 2, 30, { work_state: { owner_hold: { kind: 'owner', waiting: 'x' } } })]).length, 0);
+  assert.equal(plan([task(1, 2, 30, { work_state: { stage: 'code' } })]).map((x) => x.kind).join(), 'rescue');
+});
