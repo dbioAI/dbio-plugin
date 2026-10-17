@@ -76,23 +76,29 @@
  *   call <tool> '<json args>'           cửa thoát: gọi action bất kỳ, in JSON thô
  *
  * Tuỳ chọn chung: --board <id> (mặc định: khoá → DBIO_BOARD → thẻ đang cầm) · --model <id> · --session <id>
+ *   run <id> [--preset ..] -- <lệnh…>   (#1089) chạy lệnh kiểm + ghi bản ghi (preset, exit, sha) cho collector G3
+ *   gate <id> [--target review|done] [--deploy]   (#1089) gate_check dry-run: ok / còn thiếu gì · checkpoint & done TỰ gửi chứng cứ bằng khoá máy (tắt: --no-evidence | DBIO_EVIDENCE=0; --deploy-version <v> [--deploy-sha <sha>] khi có deploy)
  * `checkpoint --dry` chỉ đọc git cục bộ — chạy được khi máy chưa có khoá.
  * Mã thoát: 0 ok · 1 lỗi server/đối số · 2 khoá sai/thiếu · 3 cần người (lệch hồ sơ / hết giờ chờ).
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { hostname } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { client, internalRoot, cut, die, git, gitFacts, helpOf, labelsOf, parseArgs, run, taskId, whoAmI } from '../../lib/common.mjs';
 import { assignMentions, buildReason, formatHire, hireArgs, hireStatsLine, isApprovalColumn, localFilesOf, mediaUrlOf, outGate, outLine, parseOut, proposeSpec, reasonArgs, requireOutOn, resolveStuckKind, taskRef, toDeliverable } from '../../lib/staff-logic.mjs';
 import { COALESCE_MS, MAX_SHOW, coalesceGate, directGate, filterInbox, formatItem, isCopy, isGopYTalk, isSecretary, isSelf, pickBatch, shouldWake, taskIdOf } from '../../lib/watch-filter.mjs';
+import { appendRecord, collectAndSend, collectGit, presetOf, summarize } from '../../lib/evidence.mjs';
+import { loadMachineKey, machineCall, mcpFromStaffKeys } from '../../lib/agentd/roster.mjs';
 import { formatAction, formatNext, pickNext } from '../../lib/secretary.mjs';
 import { runSweep } from '../../lib/secretary-io.mjs';
 import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
-  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours'];
-const { flags, pos } = parseArgs(process.argv.slice(2), VALUE_FLAGS, ['--out', '--opt']);
+  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours', '--preset', '--target', '--deploy-version', '--deploy-sha'];
+const ARGV = process.argv.slice(2); const DD = ARGV.indexOf('--');   // #1089: sau `--` là lệnh của `staff run`, không phân tích thành cờ
+const { flags, pos } = parseArgs(DD >= 0 ? ARGV.slice(0, DD) : ARGV, VALUE_FLAGS, ['--out', '--opt']);
 const [cmd, ...rest] = pos;
 /** #1039: 4 trường thẻ từ cờ (none|- = gỡ). Server kiểm giá trị; ở đây chỉ gom. */
 function cardFieldFlags() {
@@ -176,6 +182,21 @@ async function fenceRun(id) {
   catch (e) { if (/LEASE_STALE|ATTEMPT_BUSY/.test(`${e?.code ?? ''} ${e?.message ?? ''}`)) die(`⛔ LEASE_STALE: lượt này (run ${run_id.slice(0, 8)}) đã bị thay thế — DỪNG, không ghi gì thêm lên thẻ.`, 3); throw e; }
 }
 
+/** #1089: collector G3 — thu repo@sha / scope_diff / bản ghi / deploy rồi gửi evidence_add bằng KHOÁ MÁY. Lỗi chỉ là cảnh báo. Tắt: --no-evidence | DBIO_EVIDENCE=0. */
+async function gatherEvidence(id, { dir, deploy = null } = {}) {
+  if (flags['no-evidence'] || process.env.DBIO_EVIDENCE === '0') return '';
+  try {
+    const mk = loadMachineKey({ fallbackMcp: mcpFromStaffKeys() });
+    const call = mk ? (a) => machineCall(mk, 'task_board', { action: 'evidence_add', ...a }) : null;
+    const facts = collectGit(dir ?? process.cwd());
+    const prev = await tb('task_get', { task_id: id, comments: 0, body_max: 0, description_max: 0 }).then((r) => r?.task?.work_state ?? {}).catch(() => ({}));
+    const r = await collectAndSend({ board: BOARD, card: id, dir, call, facts, deploy, attemptBase: prev.attempt_base || facts?.base || null, author: WHO, runId: process.env.DBIO_RUN_ID || prev.run_id || null });
+    return summarize(r);
+  } catch (e) { return ` · chứng cứ: lỗi ${String(e?.message ?? e).slice(0, 120)}`; }
+}
+/** version live để gắn deploy: --deploy-version <v> [--deploy-sha <sha>] (CLI/agentd đọc từ wrangler/live; không khai ⇒ không gửi). */
+const deployFlag = () => (flags['deploy-version'] ? { version: String(flags['deploy-version']), ...(flags['deploy-sha'] ? { sha: String(flags['deploy-sha']) } : {}) } : null);
+
 const cmds = {
   async whoami() {
     const r = await ai('staff_pulse', { who: WHO });
@@ -243,7 +264,8 @@ const cmds = {
       await tb('checkpoint', { task_id: id, work_state: { machine: hostname(), ...(g ? { worktree: g.top, branch: g.branch, base: g.base, head: g.head, pushed: g.onRemote.length > 0, dirty: g.dirty.map((l) => l.slice(3)).slice(0, 30) } : {}), ...(flags.deploy ? { deploys: [flags.deploy] } : {}), ...(flags.mig ? { migrations: [flags.mig] } : {}), ...(flags.wait ? { waiting: flags.wait } : {}), next: flags.next } });
       ws = ' · work_state ✓';
     } catch { /* server cũ */ }
-    console.log(`ok #${id} hồ sơ ${g?.head ?? '-'}${g && !g.onRemote.length ? ' (CHƯA push)' : ''}${g?.dirty.length ? ` · ${g.dirty.length} file dở` : ''} · comment ${r.comment_id}${ws}`);
+    const ev = g ? await gatherEvidence(id, { dir: g.top, deploy: deployFlag() }) : '';   // #1089
+    console.log(`ok #${id} hồ sơ ${g?.head ?? '-'}${g && !g.onRemote.length ? ' (CHƯA push)' : ''}${g?.dirty.length ? ` · ${g.dirty.length} file dở` : ''} · comment ${r.comment_id}${ws}${ev}`);
   },
 
   async runlog() {
@@ -406,6 +428,8 @@ const cmds = {
     reason = { ...reason, deliverables };
     const seeLine = outLine(deliverables);
     const body = [...body0, ...(seeLine ? [`6. Xem: ${seeLine}`] : [])].join('\n');
+    const evDone = g ? await gatherEvidence(id, { dir: g.top, deploy: deployFlag() }) : '';   // #1089: TRƯỚC khi kéo thẻ (evidenceGuard của máy chủ kiểm lúc task_move)
+    if (evDone) console.log(evDone.trim());
     await fenceRun(id); // #1060 (d): lượt agentd — kiểm lease TRƯỚC khi báo xong (409 LEASE_STALE ⇒ dừng)
     // Lý do duyệt TRƯỚC khi chuyển cột: chỉ người đang cầm thẻ ghi được; task PHẢI dạng đầy đủ <board>#<thẻ> (số trần ⇒ cổng khoá lead báo not_yours).
     let rnote;
@@ -427,6 +451,31 @@ const cmds = {
     recordTouch(WHO, id);
     await ai('staff_status', { who: WHO, mode: 'set', state: 'idle', note: `xong #${id}` }).catch(() => {});
     console.log(`ok #${id} → ${moved} · ${rnote} · ${deliverables.length} sản phẩm${files.length ? ` (đã tải ${files.length} tệp lên kho)` : ""} · comment ${r.comment_id}`);
+  },
+
+  /** #1089 run <thẻ> [--preset unit|build|build:dash|perm_test|negative_cases|sandbox] -- <lệnh…>: chạy lệnh kiểm rồi ghi bản ghi (preset, exit, sha) cho collector; thoát đúng mã của lệnh. */
+  async run() {
+    const id = taskId(rest[0]);
+    const at = process.argv.indexOf('--'); const argv = at >= 0 ? process.argv.slice(at + 1) : [];
+    if (!argv.length) die('Dùng: dbio staff run <thẻ> [--preset unit|build|build:dash|perm_test|negative_cases|sandbox] -- <lệnh…>');
+    const cmdline = argv.join(' '); const preset = flags.preset ? String(flags.preset) : presetOf(cmdline);
+    if (!preset) die('Không đoán được preset từ lệnh — thêm --preset <unit|build|build:dash|perm_test|negative_cases|sandbox>.');
+    const dir = flags.dir ?? process.cwd(); const sha = git(dir, 'rev-parse', 'HEAD');
+    const r = spawnSync(argv[0], argv.slice(1), { cwd: dir, stdio: 'inherit', shell: process.platform === 'win32' });
+    const exit = Number.isInteger(r.status) ? r.status : 1;
+    if (/^[0-9a-f]{40}$/i.test(sha)) { appendRecord(BOARD, id, { preset, cmd: cmdline.slice(0, 200), exit, sha, run_id: process.env.DBIO_RUN_ID || null }); console.error(`[evidence] #${id} ${preset} exit ${exit} @${sha.slice(0, 7)} — ghi bản ghi; collector gửi ở checkpoint/done`); }
+    else console.error('[evidence] không ở trong git repo — không ghi bản ghi.');
+    process.exit(exit);
+  },
+
+  /** #1089 gate <thẻ> [--target review|done] [--deploy]: gate_check (dry-run) — thiếu gì in ra. Thoát 0 ok · 3 còn thiếu. */
+  async gate() {
+    const id = taskId(rest[0]); const target = flags.target === 'done' ? 'done' : 'review';
+    const r = await tb('gate_check', { task_id: id, profile_id: BOARD, target, ...(flags.deploy ? { has_deploy: true } : {}) });
+    const d = r.data ?? r;
+    console.log(`gate #${id} → ${target}: ${d.ok ? 'OK' : 'THIẾU'} · sha ${d.sha ? String(d.sha).slice(0, 8) : '-'}`);
+    for (const x of d.gaps ?? []) console.log(`  - [${x.code}] ${x.message}`);
+    process.exit(d.ok ? 0 : 3);
   },
 
   /** #1060 (d) CÂU HỎI CHỦ MỘT LẦN: ask <thẻ> "<câu ≤3 dòng>" --opt "khoá|nhãn|tác động" (2–5 lần) [--data "<cần dữ liệu gì>"] [--default <khoá>] [--to owner|lead] [--hours N]. Không tự áp default. */
