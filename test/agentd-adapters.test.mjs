@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { adapterNames, getAdapter, loadAdapterModules, registerAdapter } from '../lib/agentd/adapters/index.mjs';
-import { isBlank, loadSpawn, resolveDesktopSession, roleOf, sessionIdFromOutput } from '../lib/agentd/adapters/claude-desktop.mjs';
+import { isBlank, resolveDesktopSession, sessionIdFromOutput } from '../lib/agentd/adapters/claude-desktop.mjs';
 import { urlAllowed } from '../lib/agentd/adapters/hermes.mjs';
 import { SAFE_ARG, assertSafeArgs, resolveBin, runChild } from '../lib/agentd/adapters/util.mjs';
 
@@ -167,7 +167,7 @@ test('claude-desktop activeAgoMs: mtime tệp hội thoại của phiên (đang 
   assert.equal(ad.activeAgoMs({}), null);
 });
 
-test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionId): KHÔNG trả null, KHÔNG --resume, chạy claude -p phiên mới trong cwd của tệp', async () => {
+test('#1082 claude-desktop PHIÊN TRỐNG (vừa clear): KHÔNG --resume, KHÔNG tạo phiên ngầm ⇒ relay:true (cầu thư ký nhắn vào phiên ghim)', async () => {
   const root = mkdtempSync(join(tmpdir(), 'blank-')); const dir = join(root, 'a', 'o'); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'local_blank1.json'), JSON.stringify({ sessionId: 'local_blank1', cwd: 'D:\\proj', priorCliSessionIds: ['cu-111', 'cu-222'] }));
   writeFileSync(join(dir, 'local_full1.json'), JSON.stringify({ sessionId: 'local_full1', cliSessionId: 'cli-9', cwd: 'D:\\proj' }));
@@ -176,21 +176,32 @@ test('claude-desktop PHIÊN TRỐNG (vừa clear: tệp có, thiếu cliSessionI
   assert.equal(resolveDesktopSession('local_full1', [root]).blank, false);
   assert.equal(isBlank({ session: 'local_blank1', sessions_dir: root }), true); assert.equal(isBlank({ session: 'local_full1', sessions_dir: root }), false);
   assert.equal(isBlank({ session: 'uuid-x' }), false); assert.equal(isBlank({}), false);
-  const s = fakeSpawn();
-  const r = await getAdapter('claude-desktop').wake({ staff: 'MAC NV1', entry: { session: 'local_blank1', sessions_dir: root, blank_mode: 'headless', args: ['--permission-mode', 'acceptEdits'] }, prompt: 'PM giao thẻ #632', spawnFn: s.fn });
-  assert.ok(r.ok && r.blank);
-  assert.deepEqual(s.calls[0].args, ['-p', '--output-format', 'stream-json', '--verbose', '--name', 'MAC-NV1', '--permission-mode', 'acceptEdits']);
-  assert.ok(!s.calls[0].args.includes('--resume') && !JSON.stringify(s.calls[0].args).includes('cu-111'), 'cấm --resume priorCliSessionIds');
-  assert.equal(s.calls[0].opts.cwd, 'D:\\proj');
-  assert.match(s.calls[0].stdin, /vừa được CLEAR/); assert.match(s.calls[0].stdin, /MAC NV1/); assert.match(s.calls[0].stdin, /next --take/); assert.match(s.calls[0].stdin, /PM giao thẻ #632/);
-  assert.equal((await r.running).code, 0);
   assert.equal(sessionIdFromOutput('{"type":"result","session_id":"abc-123-def","x":1}'), 'abc-123-def'); assert.equal(sessionIdFromOutput('rác'), null);
-  const rel = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_mode: 'relay' }, prompt: 'p', spawnFn: s.fn });
-  assert.equal(rel.ok, false); assert.equal(rel.relay, true, 'blank_mode "relay" (cũ) ⇒ cần cầu thư ký, không chạy ngầm');
-  assert.equal(s.calls.length, 1);
-  const t = await getAdapter('claude-desktop').wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, blank_prompt: 'Xin chào {name} :: {prompt}' }, prompt: '$& $1', spawnFn: s.fn });
-  assert.ok(t.ok && t.blank, '#1022: MẶC ĐỊNH (spawn) phiên trống ⇒ tự tạo phiên, không cầu');
-  assert.equal(s.calls[1].stdin, 'Xin chào N :: $& $1');
+  const s = fakeSpawn(); const ad = getAdapter('claude-desktop');
+  for (const mode of [undefined, 'spawn', 'headless', 'relay']) { // blank_mode cũ KHÔNG còn mở nhánh tạo phiên
+    const r = await ad.wake({ staff: 'N', entry: { session: 'local_blank1', sessions_dir: root, cwd: 'D:\\proj', ...(mode ? { blank_mode: mode } : {}) }, prompt: 'p', events: [{ task: '1#2' }], spawnFn: s.fn });
+    assert.equal(r.ok, false); assert.equal(r.relay, true, `blank_mode ${mode}`); assert.ok(!r.lost);
+  }
+  assert.equal(s.calls.length, 0, 'không spawn gì');
+  assert.equal(ad.spawns, false);
+});
+
+test('#1082 claude-desktop MẤT phiên ghim (không khai session / tệp phiên mất / quá ngưỡng) ⇒ lost+red, KHÔNG spawn phiên CLI dù có cwd', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lost-')); const dir = join(root, 'a', 'o'); mkdirSync(dir, { recursive: true });
+  const proj = mkdtempSync(join(tmpdir(), 'proj-')); mkdirSync(join(proj, 'D--x'), { recursive: true });
+  writeFileSync(join(dir, 'local_heavy.json'), JSON.stringify({ sessionId: 'local_heavy', cliSessionId: 'cli-heavy', cwd: 'D:\\proj' }));
+  writeFileSync(join(proj, 'D--x', 'cli-heavy.jsonl'), JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 300000 } } }) + '\n');
+  const s = fakeSpawn(); const ad = getAdapter('claude-desktop');
+  const base = { sessions_dir: root, projects_dir: proj, cwd: 'D:\\proj', args: ['--permission-mode', 'bypassPermissions'] };
+  const noSess = await ad.wake({ staff: 'NV1', entry: { ...base, session: undefined }, prompt: 'p', events: [{ task: '1#2' }], spawnFn: s.fn });
+  const gone = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_mat' }, prompt: 'p', events: [{ task: '1#2' }], spawnFn: s.fn });
+  const heavy = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000 }, prompt: 'p', events: [{ task: '1#2' }], spawnFn: s.fn });
+  for (const r of [noSess, gone, heavy]) { assert.equal(r.ok, false); assert.equal(r.lost, true); assert.equal(r.red, true); assert.match(r.detail, /MẤT PHIÊN GHIM/); assert.match(r.detail, /không tự thay/); }
+  assert.equal(heavy.blocked, true);
+  assert.equal(s.calls.length, 0, 'tuyệt đối không spawn claude (headless) thay phiên ghim');
+  // còn đủ điều kiện ⇒ --resume đúng phiên ghim (và allow_large vượt ngưỡng)
+  const ok = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, allow_large: true }, prompt: 'p', events: [], spawnFn: s.fn });
+  assert.ok(ok.ok); assert.deepEqual(s.calls[0].args.slice(0, 6), ['--resume', 'cli-heavy', '-p', '--output-format', 'stream-json', '--verbose']);
 });
 
 /** spawn giả trả JSON có session_id (như claude -p --output-format json). */
@@ -204,69 +215,6 @@ function fakeSpawnSid(sid) {
   };
   return { fn, calls };
 }
-
-test('#1022 phiên ghim trống/mất/quá ngưỡng ⇒ TỰ TẠO phiên mới (tên NV, model roles.json, /staff <slug> <thẻ>); cùng thẻ ⇒ --resume phiên tự tạo; thẻ khác ⇒ phiên mới', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'spawn-')); const dir = join(root, 'a', 'o'); mkdirSync(dir, { recursive: true });
-  const proj = mkdtempSync(join(tmpdir(), 'proj-')); mkdirSync(join(proj, 'D--x'), { recursive: true });
-  const spawnDir = mkdtempSync(join(tmpdir(), 'spd-'));
-  writeFileSync(join(dir, 'local_b.json'), JSON.stringify({ sessionId: 'local_b', cwd: 'D:\proj', priorCliSessionIds: ['cu-1'] }));
-  writeFileSync(join(dir, 'local_heavy.json'), JSON.stringify({ sessionId: 'local_heavy', cliSessionId: 'cli-heavy', cwd: 'D:\proj' }));
-  writeFileSync(join(proj, 'D--x', 'cli-heavy.jsonl'), JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 300000 } } }) + '\n');
-  const roles = join(root, 'roles.json'); writeFileSync(roles, JSON.stringify({ 'DEV PLATFORM': { playbooks: ['platform-security'], model: 'claude-opus-5-5' }, NV1: { playbooks: [], model: 'claude-sonnet-5-5' } }));
-  assert.deepEqual(roleOf('DEV PLATFORM', { roles_file: roles }), { model: 'claude-opus-5-5', slug: 'platform-security' });
-  assert.deepEqual(roleOf('NV1', { roles_file: roles }), { model: 'claude-sonnet-5-5', slug: 'nv1' });
-  assert.equal(roleOf('NV1', { roles_file: roles, model: 'x y' }).model, null, 'model không an toàn ⇒ bỏ');
-  const base = { session: 'local_b', sessions_dir: root, roles_file: roles, spawn_dir: spawnDir, projects_dir: proj, args: ['--permission-mode', 'bypassPermissions'] };
-  const ad = getAdapter('claude-desktop');
-
-  // (3) phiên trống ⇒ phiên mới, có tên + model + bypass; lời nhắc mở đầu /staff
-  const s1 = fakeSpawnSid('sp-111');
-  const r1 = await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'giao thẻ', events: [{ task: '162801#5', kind: 'assign' }], spawnFn: s1.fn });
-  assert.ok(r1.ok && r1.blank); assert.ok(r1.detail.includes("TỰ TẠO phiên mới (claude-opus-5-5) cho thẻ 162801#5"), r1.detail);
-  assert.deepEqual(s1.calls[0].args, ['-p', '--output-format', 'stream-json', '--verbose', '--name', 'DEV-PLATFORM-5', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
-  assert.equal(s1.calls[0].opts.cwd, 'D:\proj');
-  assert.ok(s1.calls[0].stdin.startsWith('/staff platform-security 162801#5\n'), s1.calls[0].stdin.slice(0, 60));
-  assert.equal((await r1.running).session_id, 'sp-111');
-  assert.equal(loadSpawn('DEV PLATFORM', base).session, 'sp-111'); assert.equal(loadSpawn('DEV PLATFORM', base).card, '162801#5');
-
-  // chưa có tệp hội thoại của phiên tự tạo ⇒ không --resume mù, tạo mới
-  const s2 = fakeSpawnSid('sp-222');
-  await (await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'bình luận', events: [{ task: '162801#5', kind: 'comment' }], spawnFn: s2.fn })).running;
-  assert.ok(!s2.calls[0].args.includes('--resume'));
-  // có tệp hội thoại + cùng thẻ ⇒ --resume phiên tự tạo (giữ ngữ cảnh), lời nhắc thường (không /staff lại)
-  writeFileSync(join(proj, 'D--x', 'sp-222.jsonl'), JSON.stringify({ message: { usage: { input_tokens: 5000 } } }) + '\n');
-  const s3 = fakeSpawnSid('khong-dung');
-  const r3 = await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'bình luận 2', events: [{ task: '162801#5', kind: 'comment' }], spawnFn: s3.fn });
-  assert.deepEqual(s3.calls[0].args, ['--resume', 'sp-222', '-p', '--output-format', 'stream-json', '--verbose', '--model', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions']);
-  assert.equal(s3.calls[0].stdin, 'bình luận 2'); assert.match(r3.detail, /--resume phiên tự tạo sp-222/);
-  assert.ok(ad.activeAgoMs(base, 'DEV PLATFORM') < 10_000, 'phiên ghim trống ⇒ tuổi = phiên tự tạo (daemon không chạy song song)');
-  // thẻ KHÁC ⇒ phiên mới
-  const s4 = fakeSpawnSid('sp-333');
-  await ad.wake({ staff: 'DEV PLATFORM', entry: base, prompt: 'thẻ mới', events: [{ task: '162801#6', kind: 'assign' }], spawnFn: s4.fn });
-  assert.ok(!s4.calls[0].args.includes('--resume')); assert.ok(s4.calls[0].stdin.startsWith('/staff platform-security 162801#6'));
-
-  // tệp phiên ghim MẤT (xoá / đổi tài khoản) mà có cwd ⇒ vẫn tự tạo
-  const s5 = fakeSpawnSid('sp-444');
-  const r5 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_mat', cwd: 'D:\proj' }, prompt: 'p', events: [{ task: '162801#7' }], spawnFn: s5.fn });
-  assert.ok(r5.ok); assert.match(r5.detail, /không còn trong ứng dụng/); assert.ok(s5.calls[0].stdin.startsWith('/staff nv1 162801#7'));
-
-  // #1045: NV theo manifest KHÔNG khai session (hoặc tệp local_*.json đã bị đổi tên/xoá) ⇒ vẫn thức bằng phiên tự tạo
-  const sN = fakeSpawnSid('sp-545');
-  const rN = await ad.wake({ staff: 'NV1', entry: { ...base, session: undefined, cwd: 'D:\proj' }, prompt: 'p', events: [{ task: '162801#9' }], spawnFn: sN.fn });
-  assert.ok(rN.ok); assert.ok(sN.calls[0].stdin.startsWith('/staff nv1 162801#9'));
-  assert.equal((await ad.wake({ staff: 'NV1', entry: { ...base, session: undefined, cwd: undefined }, prompt: 'p', events: [], spawnFn: sN.fn })).ok, false);
-
-  // phiên ghim QUÁ NGƯỠNG ⇒ để yên, tạo phiên mới (không cầu dọn); allow_large ⇒ --resume như cũ
-  const s6 = fakeSpawnSid('sp-555');
-  const r6 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000 }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s6.fn });
-  assert.ok(r6.ok); assert.match(r6.detail, /không --resume phiên ghim .*TỰ TẠO/); assert.ok(!s6.calls[0].args.includes('cli-heavy'));
-  const s7 = fakeSpawnSid('x');
-  await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, allow_large: true }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s7.fn });
-  assert.deepEqual(s7.calls[0].args.slice(0, 6), ['--resume', 'cli-heavy', '-p', '--output-format', 'stream-json', '--verbose']);
-  // relay ⇒ quá ngưỡng vẫn chặn như cũ
-  const r8 = await ad.wake({ staff: 'NV1', entry: { ...base, session: 'local_heavy', max_context_tokens: 250000, blank_mode: 'relay' }, prompt: 'p', events: [{ task: '162801#8' }], spawnFn: s7.fn });
-  assert.equal(r8.ok, false); assert.equal(r8.blocked, true);
-});
 
 test('#872 nợ 5: mọi tiến trình con của agentd mang DBIO_AGENTD_TURN=1; lời nhắc mặc định cấm bật listen/watch nền', async () => {
   const { runChild } = await import('../lib/agentd/adapters/util.mjs');

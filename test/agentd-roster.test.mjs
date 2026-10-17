@@ -16,10 +16,10 @@ process.env.DBIO_AGENTD_LEASE_DIR = join(work, 'lease');
 const MK = { key: 'mk_abcdefghijklmnopqrstuvwxyz0123456789', mcp_url: 'https://x.test/mcp', source: 'file' };
 const S = (name, o = {}) => ({ id: 1, name, role: 'dev', agent: 'cli', enabled: true, ...o });
 
-test('adapter: mặc định CLI; claude-desktop CHỈ khi agent desktop + session_ref; enabled=false bỏ', () => {
+test('adapter: mặc định CLI; payload cũ (agent desktop, chưa có runtime cứng) KHÔNG suy diễn desktop; enabled=false bỏ', () => {
   assert.equal(adapterForRosterEntry(S('A')), 'claude-cli');
   assert.equal(adapterForRosterEntry(S('A', { agent: 'desktop' })), 'claude-cli');
-  assert.equal(adapterForRosterEntry(S('A', { agent: 'desktop', session_ref: 'local_x' })), 'claude-desktop');
+  assert.equal(adapterForRosterEntry(S('A', { agent: 'desktop', session_ref: 'local_x' })), 'claude-cli'); // #1082: chỉ runtime cứng (claude_desktop) mới chọn desktop — xem agentd-runtime.test.mjs
   assert.equal(adapterForRosterEntry(S('A', { enabled: false })), null);
   const m = rosterToStaff({ staff: [S('NV1', { model: 'm1' }), S('Bad";x'), S('Off', { enabled: false })] });
   assert.deepEqual(Object.keys(m), ['NV1']); assert.equal(m.NV1.model, 'm1');

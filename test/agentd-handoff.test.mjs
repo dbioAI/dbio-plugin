@@ -68,23 +68,21 @@ function fakeSpawn() {
   return { fn, calls };
 }
 
-test('adapter: phiên ghim có ngữ cảnh — cùng thẻ + nhỏ ⇒ --resume; khác thẻ / lớn / chưa có Run trước ⇒ phiên MỚI + phiếu bàn giao (handoff_tokens)', async () => {
+test('#1082 adapter claude-desktop: phiên ghim có ngữ cảnh ⇒ LUÔN --resume đúng phiên ghim (khác thẻ / chưa có Run trước cũng vậy), KHÔNG tạo phiên mới + phiếu; quá ngưỡng ⇒ lost', async () => {
   const root = mkdtempSync(join(tmpdir(), 'sess-')); const dir = join(root, 'a', 'o'); mkdirSync(dir, { recursive: true });
   const proj = mkdtempSync(join(tmpdir(), 'proj-')); mkdirSync(join(proj, 'D--x'));
   writeFileSync(join(dir, 'local_p.json'), JSON.stringify({ sessionId: 'local_p', cliSessionId: 'cli-p', cwd: 'D:\\x' }));
   writeFileSync(join(proj, 'D--x', 'cli-p.jsonl'), 'a'.repeat(5000));
-  const entry = { session: 'local_p', sessions_dir: root, projects_dir: proj, spawn_dir: mkdtempSync(join(tmpdir(), 'spd-')) };
+  const entry = { session: 'local_p', sessions_dir: root, projects_dir: proj };
   const ad = getAdapter('claude-desktop'); const handoff = buildHandoff(task(), { card: '1#7' });
   const ev = [{ task: '1#7', kind: 'assign' }];
-  const a = fakeSpawn(); await ad.wake({ staff: 'NV1', entry, prompt: 'p', events: ev, spawnFn: a.fn, handoff, prevCard: '1#7' });
-  assert.deepEqual(a.calls[0].args.slice(0, 2), ['--resume', 'cli-p'], 'cùng thẻ + nhỏ ⇒ resume');
-  for (const [label, over] of [['khác thẻ', { prevCard: '1#6' }], ['chưa có Run trước', { prevCard: null }], ['quá lớn', { prevCard: '1#7', resumeMaxBytes: 1000 }]]) {
+  for (const [label, over] of [['cùng thẻ', { prevCard: '1#7' }], ['khác thẻ', { prevCard: '1#6' }], ['chưa có Run trước', { prevCard: null }], ['hội thoại lớn theo byte', { prevCard: '1#6', resumeMaxBytes: 1000 }]]) {
     const b = fakeSpawn(); const r = await ad.wake({ staff: 'NV1', entry, prompt: 'tin mới', events: ev, spawnFn: b.fn, handoff, ...over });
-    assert.ok(!b.calls[0].args.includes('--resume'), label); assert.equal(r.spawnNew, true, label); assert.equal(r.handoff_tokens, handoff.tokens, label);
-    assert.ok(b.calls[0].stdin.includes('=== PHIẾU BÀN GIAO ===') && b.calls[0].stdin.includes('kế tiếp: làm bước B') && b.calls[0].stdin.includes('tin mới') && b.calls[0].stdin.includes('checkpoint'), label);
+    assert.deepEqual(b.calls[0].args.slice(0, 2), ['--resume', 'cli-p'], label); assert.ok(r.ok && !r.spawnNew, label); assert.equal(b.calls[0].stdin, 'tin mới', label);
   }
-  const c = fakeSpawn(); await ad.wake({ staff: 'NV1', entry: { ...entry, allow_large: true }, prompt: 'p', events: ev, spawnFn: c.fn, handoff, prevCard: '9#9' });
-  assert.deepEqual(c.calls[0].args.slice(0, 2), ['--resume', 'cli-p'], 'allow_large ⇒ như cũ');
+  writeFileSync(join(proj, 'D--x', 'cli-p.jsonl'), JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 300000 } } }) + '\n');
+  const big = fakeSpawn(); const rb = await ad.wake({ staff: 'NV1', entry: { ...entry, max_context_tokens: 250000 }, prompt: 'p', events: ev, spawnFn: big.fn, handoff });
+  assert.equal(rb.ok, false); assert.equal(rb.lost, true); assert.equal(big.calls.length, 0, 'quá ngưỡng ⇒ không tạo phiên thay');
 });
 
 test('adapter claude-cli: có phiếu + cwd ⇒ mặc định phiên MỚI; cùng thẻ + nhỏ ⇒ --resume', async () => {

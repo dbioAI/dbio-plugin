@@ -97,6 +97,21 @@ Tắt: `defaults.auto_compact: false` hoặc từng mục `"auto_compact": false
 ### Phiên Desktop (kết quả thử 7/10)
 `claude --resume` trên phiên Claude Desktop (qua `cliSessionId` trong `…/Claude/claude-code-sessions/**/local_*.json`) **chạy được**: thoát 0, trả lời, ghi nối vào đúng tệp hội thoại của phiên. Lưu ý: (1) phiên nghỉ lâu bị **nguội bộ nhớ đệm** ⇒ lượt đầu tính lại toàn bộ ngữ cảnh (một phiên ~470k token tốn ~4,7 USD trên Opus) — vì thế adapter **chặn mặc định phiên > 100k token** (`max_context_tokens` đổi ngưỡng, `allow_large: true` bỏ chặn); phiên lớn thì chờ `listen` hoặc thư ký; (2) đừng thức phiên đang chạy dở trong ứng dụng (hai tiến trình cùng ghi một hội thoại); (3) việc app hiện tin mới ngay hay chỉ sau khi mở lại phiên chưa kiểm được bằng mã.
 
+### Runtime nhân viên: claude_cli vs claude_desktop (#1082, v0.3.30)
+Máy chủ khai CỨNG runtime của từng nhân viên (`machine_roster.staff[].runtime` = `claude_cli` | `claude_desktop`, hoặc `{agent: …}`; #1081). agentd chọn adapter theo đó, **không suy từ session_ref**:
+
+| runtime | adapter | hành vi |
+|---|---|---|
+| `claude_cli` | `claude-cli` | headless `claude -p` (stream-json, `--permission-mode bypassPermissions`); session_ref cũ bị bỏ qua; 1 thẻ = 1 phiên mới + phiếu bàn giao |
+| `claude_desktop` | `claude-desktop` | gửi vào ĐÚNG `session_ref` (`--resume`). **Không còn** nhánh "phiên ghim trống/mất ⇒ tự tạo phiên CLI" |
+
+- Phiên ghim **trống** (vừa clear) ⇒ cầu thư ký nhắn vào phiên (ứng dụng hiện) như cũ; `blank_mode` không áp cho desktop.
+- Phiên ghim **mất** (không khai session / không thấy tệp) hoặc **quá ngưỡng** không dọn được ⇒ daemon ghi log đỏ, `work_state.blocked='pm'` + bình luận `⛔ KẸT: pm · mất phiên ghim` @relay_to (1 lần/giờ/NV); **không tự thay** bằng phiên headless.
+- Thẻ `requires` `browser_app | computer_use | owner_watch` mà nhân viên không phải `claude_desktop` (dữ liệu cũ) ⇒ **từ chối mở lượt** + báo PM (không chạy claude).
+- Lượt desktop vẫn có Run (claim → bắt đầu → kết thúc, `outcome` từ mã thoát nếu không có stream-json); `worker_beat.staff[x]` mang `runtime` + `channel`.
+- Máy chủ CHƯA trả runtime cứng (payload cũ, chỉ có `agent: cli|desktop`) ⇒ `claude-cli` (hành vi thực tế trước đây); mục `agentd.json` tự khai `adapter: "claude-desktop"` vẫn là desktop.
+- Test cách ly (không spawn claude thật): `test/agentd-runtime.test.mjs`.
+
 ## Ép vai bằng hook (không trông skill)
 Cài làm plugin Claude Code thì `hooks/hooks.json` tự bật: mỗi lượt (`UserPromptSubmit`) và đầu phiên (`SessionStart`) hook chèn MỘT dòng do **máy chủ dbio** xác nhận — `Bạn là "<vai>" · playbook · thẻ đang cầm` — GHI ĐÈ mọi tên/vai khác trong ngữ cảnh (phiên tự nhận sai vai, hay hỏi lại việc luật đã cho phép). Vai lấy từ `DBIO_STAFF`, hoặc **tên phiên** trên app Claude desktop (tên phiên = tên nhân viên, máy có khoá của tên đó). Trạng thái nhớ 60 giây, playbook 10 phút; lỗi/chậm ⇒ im lặng, không bao giờ chặn lượt. Không có Claude Code (ChatGPT/MCP thuần): gọi `staff_status {who, mode:"get"}` đầu mỗi lượt — xem playbook `khoi-dong-may-moi`. **Chỉ cài MỘT trong hai** (dbio-plugin hoặc dbio-internal): nếu lỡ cài cả hai, hook tự chống chạy đôi (chỉ một bản in); dbio-internal cài riêng mà thiếu dbio-plugin cạnh nó thì hook im lặng (không báo lỗi mỗi lượt).
 
