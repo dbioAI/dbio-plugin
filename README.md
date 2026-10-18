@@ -161,6 +161,14 @@ Phần dưới là lịch sử trước v0.3.3:
 - `--attempt-base <sha>` (hoặc work_state.attempt_base do agentd ghi) làm gốc diff khi commit thẳng lên main; `--deploy-version <v> [--deploy-sha <sha>]` khi thẻ có triển khai; tắt: `--no-evidence` | `DBIO_EVIDENCE=0`; agentd: `defaults.evidence_collect=false`.
 - Chế độ chặn do máy chủ giữ (`platform_config evidence_gate.mode` = off|warn|block, mặc định warn).
 
+## agentd đợt 4 (#1094, v0.3.33) — hạn mức, beat gộp lỗi, LỆCH, listen PM
+
+1. **Hết hạn mức CLI** — `classifyFailure` nhận "hit your weekly limit · resets Oct 22, 9am" / "5-hour limit … resets 3pm" (giờ đọc theo Asia/Ho_Chi_Minh, UTC+7) ⇒ tài khoản hold tới giờ reset, chuyển tài khoản khác nếu còn; hết tài khoản ⇒ thẻ `work_state.blocked = quota_limited` (+ `quota_reset_at`) + 1 bình luận, `worker_beat accounts[]` gửi `retry_reason:'quota'`, `reset_at`, `limit_window` (weekly|5h) ⇒ máy chủ Hôm nay Đỏ "hết hạn mức". Tuần tra KHÔNG claim/tiếp quản khi mọi tài khoản hết hạn mức hoặc thẻ `quota_limited`; qua mốc reset tự mở lại. Không còn lượt rỗng.
+2. **Beat / nhật ký lượt lỗi mạng** — thử lại ngay 3 lần cách 5s rồi ghi 1 dòng log gộp (không báo lại tới khi phục hồi hoặc sau 1 giờ) + 1 dòng "phục hồi".
+3. **LỆCH tiến trình** — chỉ đếm `claude` gốc (và Run) đã sống ≥ 60s, bỏ shim/cmd; log chỉ khi lệch ≥ 2 nhịp liên tiếp.
+4. **listen của người duyệt** — gốc lỗi lỡ tin BÁO XONG: bộ lọc `approved` (#833) khớp chữ "duyệt / xác nhận / approved" nằm trong phần bằng chứng của báo xong ⇒ nuốt tin; `touched` cũng nuốt khi PM vừa chạm thẻ; báo xong dạng bình luận phân loại "thường" ⇒ chờ gom 20'. Nay "✅ BÁO XONG ·" / "sang CHỜ DUYỆT" luôn khẩn và miễn lọc approved/touched/góp ý/owner-wait. Mới: `dbio-staff listen --as <tên> --catchup [--hours 24] [--after-id N]` đọc lại (offline) tin đã giao chưa ack + tin bộ lọc đã bỏ (sổ `~/.dbio/stream/<tên>.<consumer>.dropped.jsonl`).
+5. **`stuck --kind owner`** chỉ nhận GO cứng (`--reason money|auth|publish|delete|dns|legal`), khác ⇒ pm; mỗi lần xin owner ghi 1 dòng `~/.dbio/stuck-kind.log`.
+
 ## Biến môi trường
 
 | Biến | Ý nghĩa |
