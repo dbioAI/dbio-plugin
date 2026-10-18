@@ -81,12 +81,12 @@
  * `checkpoint --dry` chỉ đọc git cục bộ — chạy được khi máy chưa có khoá.
  * Mã thoát: 0 ok · 1 lỗi server/đối số · 2 khoá sai/thiếu · 3 cần người (lệch hồ sơ / hết giờ chờ).
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { hostname } from 'node:os';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { homedir, hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { client, internalRoot, cut, die, git, gitFacts, helpOf, labelsOf, parseArgs, run, taskId, whoAmI } from '../../lib/common.mjs';
-import { assignMentions, buildReason, formatHire, hireArgs, hireStatsLine, isApprovalColumn, localFilesOf, mediaUrlOf, outGate, outLine, parseOut, proposeSpec, reasonArgs, requireOutOn, resolveStuckKind, taskRef, toDeliverable } from '../../lib/staff-logic.mjs';
+import { stuckKindLine, assignMentions, buildReason, formatHire, hireArgs, hireStatsLine, isApprovalColumn, localFilesOf, mediaUrlOf, outGate, outLine, parseOut, proposeSpec, reasonArgs, requireOutOn, resolveStuckKind, taskRef, toDeliverable } from '../../lib/staff-logic.mjs';
 import { COALESCE_MS, MAX_SHOW, coalesceGate, directGate, filterInbox, formatItem, isCopy, isGopYTalk, isSecretary, isSelf, pickBatch, shouldWake, taskIdOf } from '../../lib/watch-filter.mjs';
 import { appendRecord, collectAndSend, collectGit, presetOf, summarize } from '../../lib/evidence.mjs';
 import { loadMachineKey, machineCall, mcpFromStaffKeys } from '../../lib/agentd/roster.mjs';
@@ -616,6 +616,7 @@ const cmds = {
     const kind0 = String(flags.kind ?? '');
     if (!KINDS.includes(kind0)) die(`--kind phải là ${KINDS.join('|')}`);
     const { kind, downgraded } = resolveStuckKind(kind0, flags.reason); // #1084: owner chỉ cho GO cứng (--reason money|auth|publish|delete|dns|legal), khác ⇒ pm
+    if (kind0 === 'owner') { try { const lf = process.env.DBIO_STUCK_LOG || join(homedir(), '.dbio', 'stuck-kind.log'); mkdirSync(dirname(lf), { recursive: true }); appendFileSync(lf, stuckKindLine({ card: taskRef(BOARD, id), who: WHO, asked: kind0, applied: kind, reason: flags.reason }) + '\n'); } catch { /* nhật ký phụ */ } } // #1094
     if (downgraded) console.log('⚠ --kind owner chỉ nhận --reason money|auth|publish|delete|dns|legal (GO cứng) ⇒ tự chuyển --kind pm (chờ PM). Đây là cách NV báo chờ PM — KHÔNG bình luận "ĐANG CHỜ".');
     const why = String(flags.why ?? rest.slice(1).join(' ')).trim();
     if (!why) die('Thiếu chi tiết 1 dòng: dbio staff stuck <thẻ> --kind pm "<vì sao>" --need "<cần gì>"');

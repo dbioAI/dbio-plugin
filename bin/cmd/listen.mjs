@@ -3,6 +3,7 @@
  * dbio-staff listen --as "<tên>" — NGHE kênh sự kiện `staff:` (WebSocket đẩy, SSE dự phòng). Thay cho `staff watch` (vòng hỏi) khi máy chủ có kênh.
  *
  *   listen [--max-min 115] [--fresh] [--coalesce <ms>] [--sse] [--secretary] [--quiet]
+ *   listen --catchup [--hours 24] [--after-id N]   ĐỌC LẠI tin bỏ lỡ (offline): tin đã giao chưa ack + tin bộ lọc đã bỏ (approved/touched/gop-y/owner-wait/stale) — #1094
  *
  *   Chạy NỀN trong phiên (run_in_background): có tin cần làm ⇒ in (≤2 dòng/tin) rồi THOÁT 0 ⇒ phiên thức, xử lý xong chạy lại lệnh này (nối lại theo con trỏ ở đĩa, không sót).
  *   Độ trễ từ lúc giao thẻ tới lúc phiên thức: ≤ ~2s (máy chủ) + gom --coalesce (mặc định 1500ms).
@@ -20,21 +21,31 @@ import { makeOwnCommentCheck } from '../../lib/own-comment.mjs';
 import { makeStaleCheck } from '../../lib/stale-card.mjs';
 import { formatItem } from '../../lib/watch-filter.mjs';
 import { streamDir } from '../../lib/stream/cursor.mjs';
+import { readDropped } from '../../lib/stream/dropped.mjs';
 import { runStream } from '../../lib/stream/session.mjs';
 import { endBeat, logWatchExit, recordBeat } from '../../lib/watch-state.mjs';
 
-const { flags } = parseArgs(process.argv.slice(2), ['--max-min', '--coalesce']);
+const { flags } = parseArgs(process.argv.slice(2), ['--max-min', '--coalesce', '--hours', '--after-id']);
 if (flags.help || flags.h) die(helpOf(import.meta.url), 0);
 if (process.env.DBIO_AGENTD_TURN) die('[listen] chặn: đang trong lượt thức NGẦM của dbio-agentd (headless) — không bật listen nền (listener mồ côi sống sau lượt sẽ nuốt tin). Xử lý xong thì kết thúc; daemon lo việc nghe.', 4);
 const WHO = whoAmI(flags);
 const maxMs = Math.max(0.01, Number(flags['max-min'] ?? 115)) * 60_000;
+if (flags.catchup) { // #1094: đọc lại tin bỏ lỡ (offline, không nối kênh, không ack): tin đã giao mà phiên chưa ack + tin bộ lọc đã bỏ trong N giờ
+  const owed = (() => { try { return existsSync(pendingFile0()) ? JSON.parse(readFileSync(pendingFile0(), 'utf8')).ids ?? [] : []; } catch { return []; } })();
+  const rows = readDropped(WHO, 'listen', { hours: Number(flags.hours ?? 24), afterId: flags['after-id'] != null ? Number(flags['after-id']) : null }).concat(readDropped(WHO, 'agentd', { hours: Number(flags.hours ?? 24), afterId: flags['after-id'] != null ? Number(flags['after-id']) : null }));
+  rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  console.log(`[catchup] ${WHO}: ${owed.length} tin đã giao chưa ack${owed.length ? ` (id ${owed.join(',')})` : ''} · ${rows.length} tin bộ lọc đã bỏ trong ${Number(flags.hours ?? 24)}h`);
+  for (const r of rows) console.log(`#${r.id ?? '?'} ${r.at.slice(5, 16).replace('T', ' ')}Z · ${r.task ?? '?'} · ${r.kind ?? '?'} · bỏ vì ${r.reason}${r.text ? `: ${r.text.slice(0, 200)}` : ''}`);
+  process.exit(0);
+}
 const log = flags.quiet ? () => {} : (m) => console.error(`[listen] ${m}`);
 
 /**
  * ACK KHI PHIÊN XỬ LÝ (#872): listen KHÔNG ack tin nó vừa giao (phiên có thể vừa bị clear / chết trước khi đọc). Id tin đã giao ghi vào tệp "chờ ack";
  * lần chạy lại `listen` kế tiếp (= phiên đã xử lý xong và quay lại nghe) mới ack chúng. Chưa ack ⇒ máy chủ vẫn báo chưa đọc ⇒ daemon dbio-agentd giao lại sau redeliver_after_min.
  */
-const pendingFile = join(streamDir(), `${String(WHO).replace(/[^\p{L}\p{N}_-]/gu, '_')}.listen.pending.json`);
+function pendingFile0() { return join(streamDir(), `${String(WHO).replace(/[^\p{L}\p{N}_-]/gu, '_')}.listen.pending.json`); }
+const pendingFile = pendingFile0();
 const readPending = () => { try { return existsSync(pendingFile) ? JSON.parse(readFileSync(pendingFile, 'utf8')).ids ?? [] : []; } catch { return []; } };
 const writePending = (ids) => { try { mkdirSync(streamDir(), { recursive: true }); writeFileSync(`${pendingFile}.${process.pid}.tmp`, JSON.stringify({ ids, at: new Date().toISOString() })); renameSync(`${pendingFile}.${process.pid}.tmp`, pendingFile); } catch { /* bỏ */ } };
 
