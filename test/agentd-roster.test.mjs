@@ -40,6 +40,14 @@ test('effectiveStaff: cục bộ > roster > staff_defaults; không adapter ⇒ c
   assert.equal(effectiveStaff(config, {}).NV1.adapter, 'claude-cli');
 });
 
+test('#1096 NV claude_desktop: trần ngữ cảnh mặc định 150k (thắng staff_defaults); defaults.desktop_max_context_tokens đổi được; cục bộ vẫn thắng', () => {
+  const { config } = normalizeConfig({ staff_defaults: { max_context_tokens: 80000 }, staff: { D2: { max_context_tokens: 300000 } } });
+  const e = effectiveStaff(config, { NV1: { adapter: 'claude-cli', runtime: 'claude_cli' }, D1: { adapter: 'claude-desktop', runtime: 'claude_desktop', session: 'local_1' }, D2: { adapter: 'claude-desktop', session: 'local_2' } });
+  assert.equal(e.NV1.max_context_tokens, 80000); assert.equal(e.D1.max_context_tokens, 150000); assert.equal(e.D2.max_context_tokens, 300000);
+  const { config: c2 } = normalizeConfig({ defaults: { desktop_max_context_tokens: 120000 } });
+  assert.equal(effectiveStaff(c2, { D1: { adapter: 'claude-desktop', session: 'local_1' } }).D1.max_context_tokens, 120000);
+});
+
 test('migrate: TƯƠNG THÍCH NGƯỢC — staff[] giữ nguyên, chỉ thêm staff_defaults; bản N-1 (chỉ đọc staff[]) vẫn thấy adapter+args+cwd; roster rỗng ⇒ không đụng', () => {
   const raw = { staff: { A: { adapter: 'claude-desktop', session: 'local_1', cwd: '/w', args: ['--permission-mode', 'bypassPermissions'] }, B: { adapter: 'claude-desktop', session: 'local_2', cwd: '/w', args: ['--permission-mode', 'bypassPermissions'] }, Z: { adapter: 'codex' } }, discover: { enabled: false } };
   const m = migrateConfig(raw, ['A', 'B']);

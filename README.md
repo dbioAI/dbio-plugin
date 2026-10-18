@@ -84,7 +84,7 @@ An toàn: lời nhắc đi qua **stdin** (không bao giờ trên dòng lệnh); 
 
 ### Tự dọn phiên quá ngưỡng (#965, v0.3.0) — chủ không phải clear tay
 
-Phiên Desktop vượt `max_context_tokens` (mặc định 100k; khuyến nghị 250000 trong từng mục `agentd.json`) **không đứng chờ người**:
+Phiên Desktop vượt `max_context_tokens` (#1096: NV `claude_desktop` mặc định **150k** — `defaults.desktop_max_context_tokens` đổi được, thắng `staff_defaults`; mục `staff` cục bộ vẫn thắng) **không đứng chờ người**:
 
 1. **Có tin tới / hoặc phiên rảnh ≥ `rules.hygiene.idle_min` (15') mà đang cầm thẻ** ⇒ daemon ghi lời **CẦU DỌN PHIÊN** (@`defaults.relay_to`, thường THƯ KÝ NHẮC VIỆC) lên thẻ, kèm **lệnh cố định**: *checkpoint thẻ → dừng tác vụ nền → `set_remote_control {session_id:"self", enabled:false}` → `clear_session {session_id:"self"}`*. Thư ký `send_message` NGUYÊN VĂN vào phiên ghim (1 lượt cache nguội, chấp nhận).
    - Vì sao qua thư ký chứ không `claude --resume -p`: lượt thức ngầm **không có** `clear_session`/`set_remote_control` (công cụ của ứng dụng; đo 9/10) — chỉ phiên trong ứng dụng mới tự clear được.
