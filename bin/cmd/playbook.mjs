@@ -11,13 +11,13 @@
  * Cần khoá nhân viên (--as hoặc DBIO_STAFF).
  */
 import { client, die, helpOf, keyState, parseArgs, whoAmI } from '../../lib/common.mjs';
-import { getPlaybook } from '../../lib/playbook-get.mjs';
+import { getPlaybook, onlineSlugOf, refOf } from '../../lib/playbook-get.mjs';
 import { buildProposal } from '../../lib/playbook-propose.mjs';
 
 const { flags, pos } = parseArgs(process.argv.slice(2), ['--section', '--text', '--add', '--card']);
 const [cmd, ...rest] = pos;
 if (!cmd || flags.help) die(helpOf(import.meta.url), 0);
-const onlineSlug = (slug) => `playbook-${String(slug).replace(/\.md$/, '')}`;
+const onlineSlug = onlineSlugOf;
 
 async function onlineOf(c, slug) {
   const list = (await c.call('ai_playbook', { action: 'list' })).playbooks ?? [];
@@ -34,8 +34,8 @@ const cmds = {
     const who = flags.as || process.env.DBIO_STAFF || null;
     let c = null;
     const api = () => (c ??= client(who, { ...flags, throwAuth: true }), {
-      outline: (s) => c.call('ai_playbook', { action: 'get', slug: s }),
-      text: (s, g) => c.call('ai_playbook', { action: 'get', slug: s, view: 'text', ...(g ? { section: g } : {}) }),
+      outline: (s) => c.call('ai_playbook', { action: 'get', ...refOf(s) }),
+      text: (s, g) => c.call('ai_playbook', { action: 'get', ...refOf(s), view: 'text', ...(g ? { section: g } : {}) }),
     });
     const r = await getPlaybook(slug, { section: flags.section, full: flags.full }, {
       keyStatus: () => (who ? keyState(who) : 'missing'),

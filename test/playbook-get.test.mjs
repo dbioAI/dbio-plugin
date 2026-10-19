@@ -75,3 +75,12 @@ test('probeAiPlaybook: ok / thiếu khoá (không gọi) / lỗi', async () => {
   assert.match((await probeAiPlaybook('ok', async () => { throw new Error('HTTP 502'); })).reason, /lỗi mạng/);
 });
 test('reasonOf mặc định', () => { assert.equal(reasonOf(new Error('abc')), 'abc'); assert.equal(reasonOf(null, 'ok'), 'lỗi không rõ'); });
+
+test('onlineSlugOf idempotent: slug đã có tiền tố "playbook-" không bị gắn đôi; số = profile_id', async () => {
+  const { onlineSlugOf, refOf } = await import('../lib/playbook-get.mjs');
+  assert.equal(onlineSlugOf('playbook-x-v1'), 'playbook-x-v1');
+  assert.equal(onlineSlugOf('x-v1.md'), 'playbook-x-v1');
+  assert.equal(onlineSlugOf('209201'), '209201');
+  assert.deepEqual(refOf('209201'), { profile_id: 209201 });
+  assert.deepEqual(refOf('playbook-x'), { slug: 'playbook-x' });
+});
