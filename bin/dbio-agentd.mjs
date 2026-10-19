@@ -84,7 +84,7 @@ const cmds = {
     if (!loadMachineKey({ fallbackMcp: mcpFromStaffKeys() })) console.error('[agentd] 🔴 ' + MACHINE_KEY_HELP);
     mkdirSync(join(homedir(), '.dbio', 'agentd-logs'), { recursive: true });
     for (const f of plan.files) { mkdirSync(dirname(f.path), { recursive: true }); writeFileSync(f.path, f.content); }
-    for (const [c, ...a] of plan.install) { const r = spawnSync(c, a, { encoding: 'utf8' }); if (r.status !== 0 && !/unload/.test(a[0] ?? '')) die(`lỗi: ${[c, ...a].join(' ')} → ${(r.stderr || r.stdout || r.error?.message || '').trim().slice(0, 200)}`); }
+    for (const [c, ...a] of plan.install) { const r = spawnSync(c, a, { windowsHide: true, encoding: 'utf8' }); if (r.status !== 0 && !/unload/.test(a[0] ?? '')) die(`lỗi: ${[c, ...a].join(' ')} → ${(r.stderr || r.stdout || r.error?.message || '').trim().slice(0, 200)}`); }
     console.log(`ok đã cài dịch vụ (${plan.platform}). Kiểm: dbio-agentd status${plan.notes.length ? `\n${plan.notes.join('\n')}` : ''}`);
   },
 
@@ -92,14 +92,14 @@ const cmds = {
     if (flags.pm2) return uninstallPm2({ script: SCRIPT, flags });
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir() });
     if (flags.dry) { for (const c of plan.uninstall) console.log(`$ ${c.join(' ')}`); for (const f of plan.remove) console.log(`# xoá ${f}`); return; }
-    for (const [c, ...a] of plan.uninstall) spawnSync(c, a, { encoding: 'utf8' });
+    for (const [c, ...a] of plan.uninstall) spawnSync(c, a, { windowsHide: true, encoding: 'utf8' });
     for (const f of plan.remove) { try { unlinkSync(f); } catch { /* chưa có */ } }
     console.log('ok đã gỡ dịch vụ (cấu hình + log còn nguyên).');
   },
 
   async status() {
     const plan = installPlan({ platform: process.platform, node: process.execPath, script: SCRIPT, home: homedir() });
-    let registered; if (flags.pm2) { const ps = statusPm2({ script: SCRIPT }); registered = ps.registered; console.log(ps.line); } else { registered = spawnSync(plan.query[0], plan.query.slice(1), { encoding: 'utf8' }).status === 0; }
+    let registered; if (flags.pm2) { const ps = statusPm2({ script: SCRIPT }); registered = ps.registered; console.log(ps.line); } else { registered = spawnSync(plan.query[0], plan.query.slice(1), { windowsHide: true, encoding: 'utf8' }).status === 0; }
     const st = readStatus();
     const alive = !!st && Date.now() - st.beat < 45_000;
     if (flags.json) { console.log(JSON.stringify({ service_registered: registered, running: alive, ...st })); return; }

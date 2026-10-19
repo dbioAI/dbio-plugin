@@ -44,7 +44,7 @@ if (bad.length) { console.error(`Từ chối đóng gói — còn chuỗi nội 
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 mkdirSync(OUT, { recursive: true });
 const tgz = join(OUT, `dbio-plugin-${version}.tgz`);
-execFileSync('tar', ['-czf', `dbio-plugin-${version}.tgz`, '-C', ROOT, ...files], { stdio: 'inherit', cwd: OUT }); // cwd=OUT + tên tương đối: tar GNU coi 'C:' là máy từ xa
+execFileSync('tar', ['-czf', `dbio-plugin-${version}.tgz`, '-C', ROOT, ...files], { windowsHide: true, stdio: 'inherit', cwd: OUT }); // cwd=OUT + tên tương đối: tar GNU coi 'C:' là máy từ xa
 const sha256 = createHash('sha256').update(readFileSync(tgz)).digest('hex');
 writeFileSync(`${tgz}.sha256`, `${sha256}  dbio-plugin-${version}.tgz\n`);
 console.log(JSON.stringify({ version, file: tgz, size: statSync(tgz).size, sha256, files: files.length }, null, 2));

@@ -461,7 +461,7 @@ const cmds = {
     const cmdline = argv.join(' '); const preset = flags.preset ? String(flags.preset) : presetOf(cmdline);
     if (!preset) die('Không đoán được preset từ lệnh — thêm --preset <unit|build|build:dash|perm_test|negative_cases|sandbox>.');
     const dir = flags.dir ?? process.cwd(); const sha = git(dir, 'rev-parse', 'HEAD');
-    const r = spawnSync(argv[0], argv.slice(1), { cwd: dir, stdio: 'inherit', shell: process.platform === 'win32' });
+    const r = spawnSync(argv[0], argv.slice(1), { windowsHide: true, cwd: dir, stdio: 'inherit', shell: process.platform === 'win32' });
     const exit = Number.isInteger(r.status) ? r.status : 1;
     if (/^[0-9a-f]{40}$/i.test(sha)) { appendRecord(BOARD, id, { preset, cmd: cmdline.slice(0, 200), exit, sha, run_id: process.env.DBIO_RUN_ID || null }); console.error(`[evidence] #${id} ${preset} exit ${exit} @${sha.slice(0, 7)} — ghi bản ghi; collector gửi ở checkpoint/done`); }
     else console.error('[evidence] không ở trong git repo — không ghi bản ghi.');
