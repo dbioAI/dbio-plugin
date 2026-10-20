@@ -28,7 +28,7 @@
  *   assign <id> --to "<nhân viên>" [--brief "<≤12 dòng theo mẫu C>"] [--dry]
  *                                       PM giao thẻ CÓ SẴN: gắn nhãn @tên + cột Đã giao + bình luận brief @nhắc vào hộp thư
  *   assign --new "<tiêu đề>" --to "<nhân viên>" [--body "..."] [--prio 0-3]       thẻ mới qua staff_assign (có ACK/trạng thái)
- *   done <id> --state "..." --proof "..." --debt "..." --next "..." [--out <type>=<giá trị>[|tiêu đề[|thêm]]]... [--no-deliverable "<lý do>"] [--level ok|review|blocked|done] [--proposal "..."] [--no-code] [--allow-unpushed "<lý do>"] [--close] [--dry] [--dir <worktree>]
+ *   done <id> --state "..." --proof "..." --debt "..." --next "..." [--out <type>=<giá trị>[|tiêu đề[|thêm]]]... [--no-deliverable "<lý do>"] [--level ok|review|blocked|done] [--proposal "..."] [--no-code] [--allow-unpushed "<lý do>"] [--not-deployed "<lý do>"] [--close] [--dry] [--dir <worktree>]
  *                                       báo xong 5 dòng (trạng thái · sha · bằng chứng · nợ · việc kế) ⇒ thẻ sang Chờ duyệt;
  *                                       có mã mà CHƯA push / còn file dở ⇒ từ chối (dùng --no-code nếu việc không có mã).
  *                                       TRƯỚC khi chuyển cột tự ghi LÝ DO DUYỆT (ai_character approval_reason, task dạng đầy đủ <sổ cái>#<thẻ>, mức mặc định ok,
@@ -93,11 +93,12 @@ import { loadMachineKey, machineCall, mcpFromStaffKeys } from '../../lib/agentd/
 import { formatAction, formatNext, pickNext } from '../../lib/secretary.mjs';
 import { runSweep } from '../../lib/secretary-io.mjs';
 import { describeUnpushed, unpushedReport } from '../../lib/push-guard.mjs';
+import { changedDeployables, claimsDeployed } from '../../lib/deploy-guard.mjs';
 import { ackStale, fetchFreshItems } from '../../lib/watch-fetch.mjs';
 import { endBeat, loadAssigned, loadOutbox, loadQueue, loadSecretaries, loadSeen, loadTouched, logWatchExit, recordAssign, recordBeat, recordOutbox, recordTouch, saveQueue, saveSeen } from '../../lib/watch-state.mjs';
 
 const VALUE_FLAGS = ['--store', '--parent', '--n', '--next', '--wait', '--deploy', '--mig', '--dir', '--col', '--body', '--labels', '--prio', '--note',
-  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours', '--preset', '--target', '--deploy-version', '--deploy-sha', '--attempt-base', '--allow-unpushed'];
+  '--to', '--brief', '--new', '--state', '--proof', '--debt', '--max-min', '--fast', '--slow', '--rest', '--level', '--proposal', '--character', '--no-deliverable', '--kind', '--need', '--why', '--for', '--sweep', '--coalesce', '--area', '--sens', '--reason', '--requires', '--opt', '--data', '--default', '--hours', '--preset', '--target', '--deploy-version', '--deploy-sha', '--attempt-base', '--allow-unpushed', '--not-deployed'];
 const ARGV = process.argv.slice(2); const DD = ARGV.indexOf('--');   // #1089: sau `--` là lệnh của `staff run`, không phân tích thành cờ
 const { flags, pos } = parseArgs(DD >= 0 ? ARGV.slice(0, DD) : ARGV, VALUE_FLAGS, ['--out', '--opt']);
 const [cmd, ...rest] = pos;
@@ -388,7 +389,7 @@ const cmds = {
   async done() {
     const id = taskId(rest[0]);
     for (const k of ['state', 'proof', 'debt', 'next']) if (!flags[k]) die(`Thiếu --${k} (báo xong đủ 5 dòng: trạng thái · sha · bằng chứng · nợ · việc kế).`);
-    let shaLine; let g = null; let unpushedWhy = '';
+    let shaLine; let g = null; let unpushedWhy = ''; let notDeployedWhy = '';
     if (flags['no-code']) shaLine = 'không có mã (việc không đụng repo)';
     else {
       g = gitFacts(flags.dir ?? process.cwd());
@@ -400,6 +401,14 @@ const cmds = {
         const why = typeof flags['allow-unpushed'] === 'string' ? flags['allow-unpushed'].trim() : '';
         if (why.length < 5) die(`push trước: ${describeUnpushed(up)}. Push rồi báo lại (hoặc --allow-unpushed "<lý do ≥5>" — lý do được ghi lên thẻ).`);
         unpushedWhy = `${describeUnpushed(up)} — cho phép vì: ${why}`;
+      }
+      { // #1113 (6): mã client/dash/worker ⇒ phải nêu bản chạy thật (deploy/live/số bản) hoặc --not-deployed "<lý do>"
+        const dp = changedDeployables(g.top, [flags.state, flags.proof]);
+        if (dp.deployable.length && !claimsDeployed(flags.state, flags.proof)) {
+          const why = typeof flags['not-deployed'] === 'string' ? flags['not-deployed'].trim() : '';
+          if (why.length < 5) die(`Mã chạm phần phải DEPLOY (${dp.deployable.slice(0, 3).join(', ')}${dp.deployable.length > 3 ? ', …' : ''}) mà --state/--proof chưa nêu bản chạy thật. Deploy rồi ghi số bản/live vào --proof (hoặc --not-deployed "<lý do ≥5>" — lý do được ghi lên thẻ).`);
+          notDeployedWhy = why;
+        }
       }
       shaLine = `\`${g.head}\` ${cut(g.subject, 70)} (nhánh ${g.branch}, ${unpushedWhy ? 'CHƯA push toàn bộ' : 'đã push'})`;
     }
@@ -446,7 +455,7 @@ const cmds = {
     // #809/#817: không ghi được lý do ⇒ DỪNG trước bình luận + chuyển cột (máy chủ chặn vào Chờ duyệt khi thiếu lý do / bàn giao — đi tiếp chỉ
     // để lại bình luận "BÁO XONG" mồ côi rồi vẫn bị từ chối). In nguyên lỗi (vd web thiếu meta.shots) để sửa --out rồi chạy lại.
     catch (e) { die(`Chưa ghi được lý do duyệt — CHƯA bình luận, CHƯA chuyển cột: ${e?.message ?? e}`); }
-    const r = await tb('comment_add', { task_id: id, body: unpushedWhy ? `${body}\n\n⚠️ --allow-unpushed: ${unpushedWhy}` : body, audience: 'human' }); // #744: báo xong = cho người xem; #1113: cho phép chưa push ⇒ lý do ghi lên thẻ
+    const r = await tb('comment_add', { task_id: id, body: [body, unpushedWhy && `⚠️ --allow-unpushed: ${unpushedWhy}`, notDeployedWhy && `⚠️ --not-deployed: ${notDeployedWhy}`].filter(Boolean).join('\n\n'), audience: 'human' }); // #744: báo xong = cho người xem; #1113: cho phép chưa push ⇒ lý do ghi lên thẻ
     recordOutbox(WHO, r.comment_id);
     const cur = await columnOf(id).catch(() => null);
     let moved = dest;
