@@ -192,3 +192,32 @@ test('#1128 wakeNow: lượt chuẩn bị treo ⇒ HOÃN trong trần, quá wake
   assert.ok(h.logs.some((l) => /🔴 H1: lượt thức trước treo >60s.*nhả cổng/.test(l)), h.logs.join('\n'));
   h.d.stop();
 });
+
+test('#1128 patrol: NV có cổng thức kẹt quá wake_gate_max_s ⇒ tuần tra tự nhả cổng rồi kiểm (không bỏ qua mãi)', async () => {
+  const h = mkHangDaemon({});
+  await h.d.start(); h.checked.length = 0;
+  Object.assign(h.d.st.get('H1') ?? (h.d.st.set('H1', { wakes: 0, failures: 0, retryAt: 0 }), h.d.st.get('H1')), { waking: true, wakingSince: Date.parse('2026-10-17T10:00:00Z') });
+  await h.d.patrol(); assert.deepEqual(h.checked, ['H2'], 'cổng còn trong trần ⇒ bỏ qua H1');
+  h.tick(61_000); h.checked.length = 0; await h.d.patrol();
+  assert.deepEqual(h.checked.sort(), ['H1', 'H2']); assert.ok(h.logs.some((l) => /🔴 H1: lượt thức trước treo.*nhả cổng/.test(l)));
+  h.d.stop();
+});
+
+test('#1128 patrol: lượt NV treo chạy tiếp MUỘN ⇒ không xoá backoff, không hành động theo dữ liệu cũ', async () => {
+  let release; let h1Calls = 0; const logs = []; let clock = Date.parse('2026-10-17T10:00:00Z');
+  const { config } = normalizeConfig({ staff: { H1: { adapter: 'fake-spawn' } }, defaults: { coalesce_ms: 0, patrol_staff_max_s: 0.1 } });
+  const woken = [];
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
+    makeClient: () => ({ init: async () => '77', tb: (a) => { if (a !== 'get') return Promise.resolve({}); h1Calls++; return h1Calls === 1 ? new Promise((r) => { release = r; }) : Promise.resolve({ data: { tasks: [], columns: [] } }); }, ai: async () => ({ items: [] }), call: async () => ({}) }),
+    getAdapter: () => ({ name: 'fake-spawn', spawns: true, isBlank: () => false, activeAgoMs: () => null, wake: async (ctx) => { woken.push(ctx.prompt); return { ok: true, detail: 'ok' }; } }),
+    stream: () => ({ state: { connected: true, channel: 'open' }, queue: [], done: new Promise(() => {}), stop() {} }),
+  });
+  await d.start(); await d.patrol(); assert.equal(h1Calls, 1);
+  assert.ok(logs.some((l) => /H1: tuần tra lỗi \(lần 1\).*30s/.test(l)));
+  release({ data: { tasks: [{ id: 6, column_id: 1, title: 't', priority: 'normal', labels: ['@H1'], entered_column_at: ago(60) }], columns: [{ id: 1, name: 'Đã giao' }, { id: 2, name: 'Đang làm' }] } });
+  await sleep(20);
+  assert.equal(woken.length, 0, 'lượt muộn không được mở lượt');
+  clock += 10_000; await d.patrol(); assert.equal(h1Calls, 1, 'backoff 30s còn nguyên sau khi lượt treo xong muộn');
+  d.stop();
+});
