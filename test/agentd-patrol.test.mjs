@@ -121,3 +121,74 @@ test('#1084 Đang làm có blocked_reason / work_state blocked|waiting|owner_hol
   assert.equal(plan([task(1, 2, 30, { work_state: { owner_hold: { kind: 'owner', waiting: 'x' } } })]).length, 0);
   assert.equal(plan([task(1, 2, 30, { work_state: { stage: 'code' } })]).map((x) => x.kind).join(), 'rescue');
 });
+
+// ---- #1128: việc lịch / tuần tra có TRẦN — một await không bao giờ xong không được làm im mọi nhịp sau
+import { createScheduler, maxSecondsOf, withDeadline } from '../lib/agentd/schedule.mjs';
+const never = () => new Promise(() => {});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('#1128 withDeadline: xong trong trần ⇒ giá trị; treo ⇒ onHang + {hung}; lỗi muộn ⇒ onLateError', async () => {
+  assert.equal(await withDeadline(async () => 7, 200, () => assert.fail('không được gọi')), 7);
+  let hang = 0; assert.deepEqual(await withDeadline(never, 30, () => hang++), { hung: true }); assert.equal(hang, 1);
+  await assert.rejects(withDeadline(async () => { throw new Error('x'); }, 200, () => {}), /x/);
+  const late = []; await withDeadline(() => sleep(60).then(() => { throw new Error('muộn'); }), 20, () => {}, (e) => late.push(e.message));
+  await sleep(80); assert.deepEqual(late, ['muộn']);
+});
+
+test('#1128 trần mặc định + ghi đè defaults.schedule_max_s', () => {
+  assert.equal(maxSecondsOf('patrol'), 240); assert.equal(maxSecondsOf('status'), 60);
+  assert.equal(maxSecondsOf('patrol', { defaults: { schedule_max_s: { patrol: 30 } } }), 30);
+  assert.equal(maxSecondsOf('patrol', { defaults: { schedule_max_s: { patrol: 'x' } } }), 240);
+});
+
+test('#1128 lịch protect: lượt treo quá trần ⇒ log 🔴 + nhịp sau VẪN chạy (tái hiện patrol im 37\')', async () => {
+  const logs = []; let calls = 0;
+  const s = createScheduler({ log: (m) => logs.push(m), maxMs: () => 300 });
+  s.set('patrol', '* * * * * *', () => { calls++; return never(); }); // mỗi giây, fn KHÔNG BAO GIỜ resolve (client giả treo)
+  await sleep(3_400); s.stop();
+  assert.ok(calls >= 2, `nhịp sau phải chạy dù lượt trước treo (gọi ${calls} lần)`);
+  assert.ok(logs.some((l) => /🔴 lịch patrol treo >0s|🔴 lịch patrol treo >\d+s/.test(l)), logs.join('\n'));
+  assert.ok(s.hung().patrol >= 2);
+});
+
+test('#1128 lịch: lượt treo xong muộn ⇒ bớt đếm treo', async () => {
+  const logs = []; let first = true;
+  const s = createScheduler({ log: (m) => logs.push(m), maxMs: () => 200 });
+  s.set('sweep', '* * * * * *', () => { if (first) { first = false; return sleep(600); } return undefined; });
+  await sleep(2_300); s.stop();
+  assert.equal(s.hung().sweep, undefined, JSON.stringify(s.hung())); assert.ok(logs.some((l) => /lượt treo đã xong muộn/.test(l)));
+});
+
+const mkHangDaemon = ({ hangStaff, wake }) => {
+  const logs = []; let clock = Date.parse('2026-10-17T10:00:00Z'); const checked = [];
+  const { config } = normalizeConfig({ staff: { H1: { adapter: 'fake-spawn' }, H2: { adapter: 'fake-spawn' } }, defaults: { coalesce_ms: 0, patrol_staff_max_s: 0.2, wake_gate_max_s: 60 } });
+  const d = createDaemon({
+    loadCfg: () => ({ config, errors: [] }), hasKey: () => true, log: (m) => logs.push(m), now: () => clock,
+    makeClient: (n) => ({ init: async () => '77', tb: (a) => { if (n === hangStaff) return never(); checked.push(n); return Promise.resolve({ data: { tasks: [], columns: [] } }); }, ai: async () => ({ items: [] }), call: async () => ({}) }),
+    getAdapter: () => ({ name: 'fake-spawn', spawns: true, isBlank: () => false, activeAgoMs: () => null, wake: wake ?? (async () => ({ ok: true, detail: 'ok' })) }),
+    stream: () => ({ state: { connected: true, channel: 'open' }, queue: [], done: new Promise(() => {}), stop() {} }),
+  });
+  return { d, logs, checked, tick: (ms) => { clock += ms; } };
+};
+
+test('#1128 patrol: client giả của MỘT NV treo ⇒ NV kia vẫn được kiểm, vòng vẫn ghi "tuần tra:", NV treo vào backoff', async () => {
+  const h = mkHangDaemon({ hangStaff: 'H1' });
+  await h.d.start();
+  const t0 = Date.now(); await h.d.patrol(); const took = Date.now() - t0;
+  assert.ok(took < 2_000, `patrol phải xong trong trần (mất ${took}ms)`);
+  assert.deepEqual(h.checked, ['H2']);
+  assert.ok(h.logs.some((l) => /🔴 H1: tuần tra lỗi \(lần 1\) — treo >0s/.test(l)), h.logs.join('\n'));
+  assert.ok(h.logs.some((l) => /^tuần tra: kiểm/.test(l)));
+  h.d.stop();
+});
+
+test('#1128 wakeNow: lượt chuẩn bị treo ⇒ HOÃN trong trần, quá wake_gate_max_s ⇒ nhả cổng (không khoá NV vĩnh viễn)', async () => {
+  let wakes = 0; const h = mkHangDaemon({ wake: () => { wakes++; return never(); } });
+  await h.d.load();
+  h.d.wakeNow('H1', 'x'); await sleep(10); assert.equal(wakes, 1);
+  const held = await h.d.wakeNow('H1', 'x'); assert.equal(held.hold, true); assert.match(held.detail, /đang có lượt thức/);
+  h.tick(61_000); h.d.wakeNow('H1', 'x'); await sleep(10);
+  assert.equal(wakes, 2, 'quá trần cổng ⇒ được thức lại');
+  assert.ok(h.logs.some((l) => /🔴 H1: lượt thức trước treo >60s.*nhả cổng/.test(l)), h.logs.join('\n'));
+  h.d.stop();
+});
